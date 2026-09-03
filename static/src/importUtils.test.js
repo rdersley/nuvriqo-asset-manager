@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateImportRows } from './importUtils.js';
+import { readAssetImportFile, validateImportRows } from './importUtils.js';
 
 test('requires a Device Name', () => {
   const [row] = validateImportRows([{ name: '' }], []);
@@ -31,4 +31,19 @@ test('allows an import row with an asset id to be treated as an update candidate
     [{ id: 'AST-1', name: 'desktop-01' }]
   );
   assert.equal(row._error, '');
+});
+
+test('maps configured custom field labels back into customFields during CSV import', async () => {
+  const file = {
+    name: 'assets.csv',
+    text: async () => 'Device Name,Replacement Date,Asset Owner\nLaptop 001,2027-01-15,IT Team\n'
+  };
+  const rows = await readAssetImportFile(file, [
+    { key: 'replacementDate', label: 'Replacement Date', type: 'date' },
+    { key: 'assetOwner', label: 'Asset Owner', type: 'text' }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Laptop 001');
+  assert.equal(rows[0].customFields.replacementDate, '2027-01-15');
+  assert.equal(rows[0].customFields.assetOwner, 'IT Team');
 });
