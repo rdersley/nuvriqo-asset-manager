@@ -4,6 +4,7 @@ import { kvs, WhereConditions } from '@forge/kvs';
 
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
+const ASSET_NAME_PREFIX = 'asset-name:';
 const LINK_PREFIX = 'issue-link:';
 const HISTORY_PREFIX = 'asset-history:';
 const SETTINGS_KEY = 'settings:asset-manager';
@@ -18,6 +19,8 @@ const DEFAULT_SETTINGS = {
 const now = () => new Date().toISOString();
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const safeArray = (value) => Array.isArray(value) ? value : [];
+const normaliseName = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
+const nameIndexKey = (name) => `${ASSET_NAME_PREFIX}${encodeURIComponent(normaliseName(name))}`;
 
 function makeAssetId() {
   const stamp = Date.now().toString(36).toUpperCase();
@@ -54,15 +57,34 @@ async function addHistory(assetId, event) {
   await kvs.set(key, { assetId, timestamp, ...event });
 }
 
+async function assertUniqueDeviceName(name, assetId) {
+  const normalized = normaliseName(name);
+  if (!normalized) throw new Error('Device name is required.');
+  const indexed = await kvs.get(nameIndexKey(name));
+  if (indexed?.assetId && indexed.assetId !== assetId) {
+    throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`);
+  }
+}
+
 async function saveOneAsset(supplied, source = 'manual') {
-  if (!clean(supplied?.name)) throw new Error('Asset name is required.');
+  if (!clean(supplied?.name)) throw new Error('Device name is required.');
   const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
   const asset = normaliseAsset(supplied, existing || {});
+
+  await assertUniqueDeviceName(asset.name, asset.id);
+
+  const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
+  const newNameKey = nameIndexKey(asset.name);
+
   await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset);
+  await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt });
+  if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey);
+
   if (!existing) {
     await addHistory(asset.id, { type: 'created', source, message: 'Asset created' });
   } else {
     const changes = [];
+    if (existing.name !== asset.name) changes.push({ field: 'device name', from: existing.name || '', to: asset.name || '' });
     if ((existing.assigneeAccountId || existing.assigneeName) !== (asset.assigneeAccountId || asset.assigneeName)) changes.push({ field: 'assignee', from: existing.assigneeName || 'Unassigned', to: asset.assigneeName || 'Unassigned' });
     if (existing.status !== asset.status) changes.push({ field: 'status', from: existing.status || '', to: asset.status || '' });
     if (existing.location !== asset.location) changes.push({ field: 'location', from: existing.location || '', to: asset.location || '' });
@@ -71,19 +93,48 @@ async function saveOneAsset(supplied, source = 'manual') {
   return asset;
 }
 
+async function queryAllByPrefix(prefix) {
+  const values = [];
+  let cursor;
+  do {
+    let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100);
+    if (cursor) query = query.cursor(cursor);
+    const page = await query.getMany();
+    values.push(...page.results.map((entry) => entry.value));
+    cursor = page.nextCursor;
+  } while (cursor);
+  return values;
+}
+
 resolver.define('listAssets', async ({ payload }) => {
   const query = String(payload?.query || '').toLowerCase();
   const status = clean(payload?.status || '');
   const type = clean(payload?.type || '');
   const location = clean(payload?.location || '');
-  const result = await kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100).getMany();
-  let assets = result.results.map((entry) => entry.value);
+  let assets = await queryAllByPrefix(ASSET_PREFIX);
   if (query) assets = assets.filter((asset) => [asset.id, asset.name, asset.type, asset.manufacturer, asset.model, asset.serialNumber, asset.assigneeName, asset.status, asset.location].some((value) => String(value || '').toLowerCase().includes(query)));
   if (status) assets = assets.filter((asset) => asset.status === status);
   if (type) assets = assets.filter((asset) => asset.type === type);
   if (location) assets = assets.filter((asset) => asset.location === location);
-  assets.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  assets.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
   return assets;
+});
+
+resolver.define('searchDevices', async ({ payload }) => {
+  const query = normaliseName(payload?.query || '');
+  const assets = await queryAllByPrefix(ASSET_PREFIX);
+  return assets
+    .filter((asset) => !query || normaliseName(asset.name).includes(query))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }))
+    .slice(0, 50)
+    .map((asset) => ({ id: asset.id, name: asset.name }));
+});
+
+resolver.define('getAssetByName', async ({ payload }) => {
+  const name = clean(payload?.name || '');
+  if (!name) return null;
+  const indexed = await kvs.get(nameIndexKey(name));
+  return indexed?.assetId ? kvs.get(`${ASSET_PREFIX}${indexed.assetId}`) : null;
 });
 
 resolver.define('getAsset', async ({ payload }) => payload?.id ? kvs.get(`${ASSET_PREFIX}${payload.id}`) : null);
@@ -96,22 +147,25 @@ resolver.define('bulkImportAssets', async ({ payload }) => {
   let imported = 0;
   for (let i = 0; i < rows.length; i += 1) {
     try { await saveOneAsset(rows[i], 'csv-import'); imported += 1; }
-    catch (error) { failed.push({ row: i + 2, message: error?.message || 'Import failed' }); }
+    catch (error) { failed.push({ row: i + 2, deviceName: clean(rows[i]?.name || ''), message: error?.message || 'Import failed' }); }
   }
   return { imported, failed };
 });
 
 resolver.define('deleteAsset', async ({ payload }) => {
   if (!payload?.id) throw new Error('Asset id is required.');
+  const asset = await kvs.get(`${ASSET_PREFIX}${payload.id}`);
+  if (!asset) return { ok: true };
   await kvs.delete(`${ASSET_PREFIX}${payload.id}`);
-  await addHistory(payload.id, { type: 'deleted', source: 'manual', message: 'Asset deleted' });
+  if (asset.name) await kvs.delete(nameIndexKey(asset.name));
+  await addHistory(payload.id, { type: 'deleted', source: 'manual', message: 'Asset deleted', deviceName: asset.name });
   return { ok: true };
 });
 
 resolver.define('getAssetHistory', async ({ payload }) => {
   if (!payload?.assetId) return [];
-  const result = await kvs.query().where('key', WhereConditions.beginsWith(`${HISTORY_PREFIX}${payload.assetId}:`)).limit(100).getMany();
-  return result.results.map((entry) => entry.value).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+  const history = await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`);
+  return history.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
 });
 
 resolver.define('getSettings', async () => ({ ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) }));
@@ -152,7 +206,7 @@ resolver.define('linkAssetToIssue', async ({ payload, context }) => {
   if (!issueKey || !assetId) throw new Error('Issue and asset are required.');
   const asset = await kvs.get(`${ASSET_PREFIX}${assetId}`);
   if (!asset) throw new Error('Asset not found.');
-  await kvs.set(`${LINK_PREFIX}${issueKey}`, { issueKey, assetId, linkedAt: now() });
+  await kvs.set(`${LINK_PREFIX}${issueKey}`, { issueKey, assetId, deviceName: asset.name, linkedAt: now() });
   await addHistory(assetId, { type: 'ticket-linked', source: 'jira', message: `${issueKey} linked to asset`, issueKey });
   return { issueKey, asset };
 });
@@ -169,8 +223,8 @@ resolver.define('unlinkAssetFromIssue', async ({ payload, context }) => {
 resolver.define('getAssetTickets', async ({ payload }) => {
   const assetId = payload?.assetId;
   if (!assetId) return [];
-  const links = await kvs.query().where('key', WhereConditions.beginsWith(LINK_PREFIX)).limit(100).getMany();
-  const issueKeys = links.results.filter((entry) => entry.value?.assetId === assetId).map((entry) => entry.value.issueKey);
+  const links = await queryAllByPrefix(LINK_PREFIX);
+  const issueKeys = links.filter((link) => link?.assetId === assetId).map((link) => link.issueKey);
   if (!issueKeys.length) return [];
   const jql = `key in (${issueKeys.join(',')}) ORDER BY created DESC`;
   const response = await api.asUser().requestJira(route`/rest/api/3/search/jql?jql=${jql}&fields=summary,status,created,resolutiondate&maxResults=100`, { headers: { Accept: 'application/json' } });
