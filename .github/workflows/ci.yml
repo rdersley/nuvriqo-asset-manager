@@ -31,6 +31,9 @@ jobs:
       - name: Check resolver syntax
         run: node --check src/index.js
 
+      - name: Test import validation
+        run: npm --prefix static test
+
       - name: Build Asset Manager UI
         run: npm --prefix static run build
 
