@@ -146,7 +146,7 @@ resolver.define('bulkImportAssets', async ({ payload }) => {
   const failed = [];
   let imported = 0;
   for (let i = 0; i < rows.length; i += 1) {
-    try { await saveOneAsset(rows[i], 'csv-import'); imported += 1; }
+    try { await saveOneAsset(rows[i], 'bulk-import'); imported += 1; }
     catch (error) { failed.push({ row: i + 2, deviceName: clean(rows[i]?.name || ''), message: error?.message || 'Import failed' }); }
   }
   return { imported, failed };
@@ -156,6 +156,11 @@ resolver.define('deleteAsset', async ({ payload }) => {
   if (!payload?.id) throw new Error('Asset id is required.');
   const asset = await kvs.get(`${ASSET_PREFIX}${payload.id}`);
   if (!asset) return { ok: true };
+  const links = await queryAllByPrefix(LINK_PREFIX);
+  const linkedIssues = links.filter((link) => link?.assetId === payload.id).map((link) => link.issueKey).filter(Boolean);
+  if (linkedIssues.length) {
+    throw new Error(`This device is linked to ${linkedIssues.length} Jira ticket${linkedIssues.length === 1 ? '' : 's'}. Unlink those tickets before deleting the device.`);
+  }
   await kvs.delete(`${ASSET_PREFIX}${payload.id}`);
   if (asset.name) await kvs.delete(nameIndexKey(asset.name));
   await addHistory(payload.id, { type: 'deleted', source: 'manual', message: 'Asset deleted', deviceName: asset.name });
@@ -221,14 +226,17 @@ resolver.define('unlinkAssetFromIssue', async ({ payload, context }) => {
 });
 
 resolver.define('getAssetTickets', async ({ payload }) => {
-  const assetId = payload?.assetId;
+  const assetId = clean(payload?.assetId || '');
   if (!assetId) return [];
+
   const links = await queryAllByPrefix(LINK_PREFIX);
-  const issueKeys = links.filter((link) => link?.assetId === assetId).map((link) => link.issueKey);
-  if (!issueKeys.length) return [];
-  const jql = `key in (${issueKeys.join(',')}) ORDER BY created DESC`;
+  const legacyKeys = links.filter((link) => link?.assetId === assetId).map((link) => link.issueKey).filter(Boolean);
+  const conditions = [`"Device".AssetId = "${assetId.replaceAll('"', '\\"')}"`];
+  if (legacyKeys.length) conditions.push(`key in (${legacyKeys.join(',')})`);
+  const jql = `(${conditions.join(' OR ')}) ORDER BY created DESC`;
+
   const response = await api.asUser().requestJira(route`/rest/api/3/search/jql?jql=${jql}&fields=summary,status,created,resolutiondate&maxResults=100`, { headers: { Accept: 'application/json' } });
-  if (!response.ok) return issueKeys.map((key) => ({ key }));
+  if (!response.ok) return legacyKeys.map((key) => ({ key }));
   const data = await response.json();
   return (data.issues || []).map((issue) => ({ key: issue.key, summary: issue.fields?.summary || '', status: issue.fields?.status?.name || '', created: issue.fields?.created || '', resolved: issue.fields?.resolutiondate || '' }));
 });
