@@ -18,19 +18,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            static/package-lock.json
 
       - name: Install backend dependencies
         run: npm install --ignore-scripts
 
-      - name: Install Custom UI dependencies
+      - name: Install Asset Manager UI dependencies
         run: npm --prefix static install
+
+      - name: Install Device field UI dependencies
+        run: npm --prefix field-static install
 
       - name: Check resolver syntax
         run: node --check src/index.js
 
-      - name: Build Custom UI
+      - name: Build Asset Manager UI
         run: npm --prefix static run build
+
+      - name: Build Device field UI
+        run: npm --prefix field-static run build
