@@ -1,0 +1,36 @@
+name: Asset Manager CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            static/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts
+
+      - name: Install Custom UI dependencies
+        run: npm --prefix static install
+
+      - name: Check resolver syntax
+        run: node --check src/index.js
+
+      - name: Build Custom UI
+        run: npm --prefix static run build
