@@ -15,6 +15,36 @@ modules:
       title: Device / Asset
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
 
+  jira:customField:
+    - key: nuvriqo-device-field
+      name: Device
+      description: Select a device from Nuvriqo Asset Manager.
+      type: object
+      resolver:
+        function: resolver
+      schema:
+        type: object
+        properties:
+          id:
+            type: string
+          name:
+            type: string
+            searchAlias: Device
+        required:
+          - id
+          - name
+        additionalProperties: false
+      view:
+        formatter:
+          expression: "value != null ? value.name : ''"
+          export: true
+      edit:
+        resource: device-field
+        experience:
+          - issue-view
+          - issue-create
+          - issue-transition
+
   function:
     - key: resolver
       handler: index.handler
@@ -24,6 +54,8 @@ resources:
     path: static/dist
   - key: issue-panel
     path: static/dist
+  - key: device-field
+    path: field-static/dist
 
 permissions:
   scopes:
