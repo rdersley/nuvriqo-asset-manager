@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +28,12 @@ jobs:
       - name: Install Device field UI dependencies
         run: npm --prefix field-static install
 
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli@latest
+
+      - name: Disable Forge usage analytics
+        run: forge settings set usage-analytics false
+
       - name: Check resolver syntax
         run: node --check src/index.js
 
@@ -39,3 +45,6 @@ jobs:
 
       - name: Build Device field UI
         run: npm --prefix field-static run build
+
+      - name: Forge lint
+        run: forge lint
