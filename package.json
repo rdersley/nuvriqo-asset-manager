@@ -1,6 +1,6 @@
 {
   "name": "nuvriqo-asset-manager",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "postinstall": "npm --prefix static install && npm --prefix field-static install",
