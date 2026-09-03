@@ -22,12 +22,36 @@ function cellValue(value) {
   return value == null ? '' : String(value).trim();
 }
 
-function rowsToAssets(rows) {
+function customFieldMap(customFields = []) {
+  const map = new Map();
+  for (const field of customFields) {
+    if (!field?.key) continue;
+    map.set(normaliseHeader(field.key), field.key);
+    if (field.label) map.set(normaliseHeader(field.label), field.key);
+  }
+  return map;
+}
+
+function rowsToAssets(rows, customFields = []) {
   if (!Array.isArray(rows) || rows.length < 2) return [];
   const headers = rows[0].map(normaliseHeader);
+  const customMap = customFieldMap(customFields);
+
   return rows.slice(1)
     .filter((row) => Array.isArray(row) && row.some((value) => cellValue(value)))
-    .map((row) => Object.fromEntries(headers.map((header, index) => [FIELD_MAP[header] || header, cellValue(row[index])])));
+    .map((row) => {
+      const asset = { customFields: {} };
+      headers.forEach((header, index) => {
+        if (!header) return;
+        const value = cellValue(row[index]);
+        const coreField = FIELD_MAP[header];
+        const customKey = customMap.get(header);
+        if (coreField) asset[coreField] = value;
+        else if (customKey) asset.customFields[customKey] = value;
+      });
+      if (!Object.keys(asset.customFields).length) delete asset.customFields;
+      return asset;
+    });
 }
 
 function parseCsvRows(text) {
@@ -50,10 +74,10 @@ function parseCsvRows(text) {
   return rows;
 }
 
-export async function readAssetImportFile(file) {
+export async function readAssetImportFile(file, customFields = []) {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.csv')) return rowsToAssets(parseCsvRows(await file.text()));
-  if (lower.endsWith('.xlsx')) return rowsToAssets(await readSheet(file));
+  if (lower.endsWith('.csv')) return rowsToAssets(parseCsvRows(await file.text()), customFields);
+  if (lower.endsWith('.xlsx')) return rowsToAssets(await readSheet(file), customFields);
   throw new Error('Please choose a CSV or Excel .xlsx file.');
 }
 
