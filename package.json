@@ -1,10 +1,12 @@
 {
   "name": "nuvriqo-asset-manager",
-  "version": "0.3.0",
+  "version": "0.9.0",
   "private": true,
   "scripts": {
     "postinstall": "npm --prefix static install && npm --prefix field-static install",
     "build": "npm --prefix static run build && npm --prefix field-static run build",
+    "test": "npm --prefix static test",
+    "validate": "node --check src/index.js && npm test && npm run build",
     "install:ui": "npm --prefix static install && npm --prefix field-static install"
   },
   "dependencies": {
