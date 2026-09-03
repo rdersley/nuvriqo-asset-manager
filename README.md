@@ -4,51 +4,61 @@ A deliberately simple asset and device manager for Jira and Jira Service Managem
 
 > Assets without the CMDB.
 
-## V0.2 scaffold
+## Initial V1 build
 
-Current implementation includes:
+Core implementation now includes:
 
 - Forge global page for the asset register
-- Forge Jira issue panel for linking a device to a ticket
-- Forge KVS-backed asset records
+- Manual Add Asset and Edit Asset screens
+- Mandatory, case-insensitive unique Device Name validation
+- CSV and Excel `.xlsx` bulk import
+- Import preview and validation before assets are created
+- CSV export
 - Search and filters
-- Asset create/edit/delete
-- Jira user search/autocomplete foundation for assignment
-- Assignment, status and location activity history
-- App-managed linked-ticket history
-- CSV import and export
+- Jira user search/autocomplete for assignment
 - Configurable asset types, statuses and locations
 - Configurable text/date custom asset fields
-- Asset detail view and activity timeline
+- Assignment, Device Name, status and location history
+- Asset detail and activity timeline
+- Jira issue panel for linking a ticket to a device
+- Linked Jira ticket history on each asset
+- Jira `Device` custom field with a Device Name-only picker
+- Device custom field object value retains the internal asset ID while displaying only the Device Name
+- Asset delete flow
+- Paginated Forge KVS reads for larger registers
+- GitHub Actions build validation for the main UI and Device field UI
 
 ## Asset model
 
-Core fields currently include asset ID, name, type, manufacturer, model, serial number, assigned Jira user, status, location, purchase date, warranty expiry, notes and custom fields.
+Core fields are internal asset ID, unique Device Name, type, manufacturer, model, serial number, assigned Jira user, status, location, purchase date, warranty expiry, notes and configurable custom fields.
 
 ## Storage model
 
 - `asset:<id>` — asset records
+- `asset-name:<normalised-name>` — unique Device Name index
 - `issue-link:<issueKey>` — issue-to-asset link records
-- `asset-event:<assetId>:<timestamp>:<id>` — asset history events
-- `asset-config` — admin configuration
+- `asset-history:<assetId>:<timestamp>:<id>` — asset activity history
+- `settings:asset-manager` — admin configuration
 
 Personal assignment data is kept in Forge app storage rather than Jira entity properties.
 
-## Before first deployment
+## Import headings
 
-1. Replace `REPLACE_WITH_FORGE_APP_ID` in `manifest.yml` with the Forge app ID.
-2. Install dependencies with `npm install`.
-3. Build the Custom UI with `npm run build`.
-4. Run Forge lint and deploy/install in a development environment.
-5. Validate Jira user search permissions and the issue-panel context on the target site.
+The importer recognises common headings including `Device Name`, `Name`, `Type`, `Manufacturer`, `Model`, `Serial Number`, `Assigned To`, `Status`, `Location`, `Purchase Date`, `Warranty Expiry` and `Notes`.
 
-## Next V1 build slice
+Device Name is required. Duplicate Device Names are rejected both within an import file and against the existing asset register.
 
-- JSM portal device picker restricted to devices assigned to the customer
-- Portal request detail asset panel
-- Larger-register pagination
-- Import validation/mapping improvements
-- Admin guards and release hardening
-- Automated tests and GitHub Actions
+## First deployment gate
 
-The V1 scope intentionally avoids CMDB schemas, dependency maps, discovery and AQL-style querying.
+Before calling the initial version complete:
+
+1. GitHub Actions must successfully build both Custom UIs and syntax-check the resolver.
+2. Run `forge lint` locally against the registered app.
+3. Deploy to the Forge development environment.
+4. Install on the Nuvriqo Jira site.
+5. Perform live smoke tests for manual create/edit/delete, CSV import, Excel import, Device picker, Jira user assignment and linked tickets.
+6. Resolve any Forge manifest or permission issues found in the development install.
+
+## Deliberately later
+
+The JSM portal device picker and portal request detail experience are intentionally deferred until after the core V1 is stable. V1 also avoids CMDB schemas, dependency maps, discovery and AQL-style querying.
