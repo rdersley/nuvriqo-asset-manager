@@ -1,11 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { invoke } from '@forge/bridge';
 import { readAssetImportFile, validateImportRows } from './importUtils';
 
 export default function ImportDialog({ existingAssets, onImport, onClose }) {
   const [fileName, setFileName] = useState('');
   const [rows, setRows] = useState([]);
+  const [customFields, setCustomFields] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    invoke('getSettings')
+      .then((settings) => setCustomFields(Array.isArray(settings?.customFields) ? settings.customFields : []))
+      .catch(() => setCustomFields([]));
+  }, []);
 
   const validRows = rows.filter((row) => !row._error);
   const invalidRows = rows.filter((row) => row._error);
@@ -15,7 +23,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
     setBusy(true);
     setError('');
     try {
-      const parsed = await readAssetImportFile(file);
+      const parsed = await readAssetImportFile(file, customFields);
       const checked = validateImportRows(parsed, existingAssets);
       setFileName(file.name);
       setRows(checked);
@@ -47,7 +55,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(9,30,66,.45)', display: 'grid', placeItems: 'center', zIndex: 1000, padding: 24 }}>
       <div className="card form-card" style={{ width: 'min(980px, 100%)', maxHeight: '88vh', overflow: 'auto' }}>
         <div className="section-head">
-          <div><h2>Import assets</h2><p>Upload CSV or Excel (.xlsx), review the rows, then create the valid assets.</p></div>
+          <div><h2>Import assets</h2><p>Upload CSV or Excel (.xlsx), review the rows, then create the valid assets. Configured custom asset fields are matched by field name or key.</p></div>
           <button className="secondary" onClick={onClose} disabled={busy}>Close</button>
         </div>
 
