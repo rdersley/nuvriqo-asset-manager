@@ -1,0 +1,40 @@
+modules:
+  jira:globalPage:
+    - key: nuvriqo-asset-manager
+      resource: main
+      resolver:
+        function: resolver
+      title: Asset Manager
+      layout: blank
+
+  jira:issuePanel:
+    - key: nuvriqo-asset-issue-panel
+      resource: issue-panel
+      resolver:
+        function: resolver
+      title: Device / Asset
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+
+  function:
+    - key: resolver
+      handler: index.handler
+
+resources:
+  - key: main
+    path: static/dist
+  - key: issue-panel
+    path: static/dist
+
+permissions:
+  scopes:
+    - storage:app
+    - read:jira-work
+    - read:user:jira
+    - read:avatar:jira
+    - read:application-role:jira
+    - read:group:jira
+
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/REPLACE_WITH_FORGE_APP_ID
