@@ -27,9 +27,10 @@ modules:
         properties:
           id:
             type: string
+            searchAlias: AssetId
           name:
             type: string
-            searchAlias: Device
+            searchAlias: DeviceName
         required:
           - id
           - name
