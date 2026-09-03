@@ -1,0 +1,15 @@
+{
+  "name": "nuvriqo-asset-manager",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm --prefix static install",
+    "build": "npm --prefix static run build",
+    "install:ui": "npm --prefix static install"
+  },
+  "dependencies": {
+    "@forge/api": "^5.0.0",
+    "@forge/resolver": "^1.7.0",
+    "@forge/kvs": "^1.0.0"
+  }
+}
