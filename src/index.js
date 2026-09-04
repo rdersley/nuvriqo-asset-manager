@@ -61,9 +61,7 @@ async function assertUniqueDeviceName(name, assetId) {
   const normalized = normaliseName(name);
   if (!normalized) throw new Error('Device name is required.');
   const indexed = await kvs.get(nameIndexKey(name));
-  if (indexed?.assetId && indexed.assetId !== assetId) {
-    throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`);
-  }
+  if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`);
 }
 
 async function saveOneAsset(supplied, source = 'manual') {
@@ -100,6 +98,44 @@ async function queryAllByPrefix(prefix) {
     cursor = page.nextCursor;
   } while (cursor);
   return values;
+}
+
+function ticketFields(issue) {
+  return {
+    key: issue.key,
+    summary: issue.fields?.summary || '',
+    status: issue.fields?.status?.name || '',
+    statusCategory: issue.fields?.status?.statusCategory?.key || '',
+    issueType: issue.fields?.issuetype?.name || '',
+    priority: issue.fields?.priority?.name || '',
+    assignee: issue.fields?.assignee?.displayName || '',
+    created: issue.fields?.created || '',
+    resolved: issue.fields?.resolutiondate || '',
+    resolution: issue.fields?.resolution?.name || ''
+  };
+}
+
+async function searchAssetTickets(assetId, legacyKeys = []) {
+  const conditions = [`"Device".AssetId = "${assetId.replaceAll('"', '\\"')}"`];
+  if (legacyKeys.length) conditions.push(`key in (${legacyKeys.join(',')})`);
+  const jql = `(${conditions.join(' OR ')}) ORDER BY created DESC`;
+  const fields = ['summary', 'status', 'issuetype', 'priority', 'assignee', 'created', 'resolutiondate', 'resolution'];
+  const issues = [];
+  let nextPageToken;
+  do {
+    const body = { jql, fields, maxResults: 100 };
+    if (nextPageToken) body.nextPageToken = nextPageToken;
+    const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error(`Jira ticket lookup failed with status ${response.status}.`);
+    const data = await response.json();
+    issues.push(...safeArray(data.issues));
+    nextPageToken = data.nextPageToken || null;
+  } while (nextPageToken);
+  return issues.map(ticketFields);
 }
 
 resolver.define('listAssets', async ({ payload }) => {
@@ -149,8 +185,11 @@ resolver.define('deleteAsset', async ({ payload }) => {
   const asset = await kvs.get(`${ASSET_PREFIX}${payload.id}`);
   if (!asset) return { ok: true };
   const links = await queryAllByPrefix(LINK_PREFIX);
-  const linkedIssues = links.filter((link) => link?.assetId === payload.id).map((link) => link.issueKey).filter(Boolean);
-  if (linkedIssues.length) throw new Error(`This device is linked to ${linkedIssues.length} Jira ticket${linkedIssues.length === 1 ? '' : 's'}. Unlink those tickets before deleting the device.`);
+  const legacyKeys = links.filter((link) => link?.assetId === payload.id).map((link) => link.issueKey).filter(Boolean);
+  let linkedTickets;
+  try { linkedTickets = await searchAssetTickets(payload.id, legacyKeys); }
+  catch { throw new Error('Could not verify whether this device is linked to Jira tickets. Please try again before deleting it.'); }
+  if (linkedTickets.length) throw new Error(`This device is linked to ${linkedTickets.length} Jira ticket${linkedTickets.length === 1 ? '' : 's'}. Clear the Device field or unlink those tickets before deleting the device.`);
   await kvs.delete(`${ASSET_PREFIX}${payload.id}`);
   if (asset.name) await kvs.delete(nameIndexKey(asset.name));
   await addHistory(payload.id, { type: 'deleted', source: 'manual', message: 'Asset deleted', deviceName: asset.name });
@@ -220,25 +259,29 @@ resolver.define('getAssetTickets', async ({ payload }) => {
   if (!assetId) return [];
   const links = await queryAllByPrefix(LINK_PREFIX);
   const legacyKeys = links.filter((link) => link?.assetId === assetId).map((link) => link.issueKey).filter(Boolean);
-  const conditions = [`"Device".AssetId = "${assetId.replaceAll('"', '\\"')}"`];
-  if (legacyKeys.length) conditions.push(`key in (${legacyKeys.join(',')})`);
-  const jql = `(${conditions.join(' OR ')}) ORDER BY created DESC`;
-  const fields = 'summary,status,issuetype,priority,assignee,created,resolutiondate,resolution';
-  const response = await api.asUser().requestJira(route`/rest/api/3/search/jql?jql=${jql}&fields=${fields}&maxResults=100`, { headers: { Accept: 'application/json' } });
-  if (!response.ok) return legacyKeys.map((key) => ({ key }));
-  const data = await response.json();
-  return (data.issues || []).map((issue) => ({
-    key: issue.key,
-    summary: issue.fields?.summary || '',
-    status: issue.fields?.status?.name || '',
-    statusCategory: issue.fields?.status?.statusCategory?.key || '',
-    issueType: issue.fields?.issuetype?.name || '',
-    priority: issue.fields?.priority?.name || '',
-    assignee: issue.fields?.assignee?.displayName || '',
-    created: issue.fields?.created || '',
-    resolved: issue.fields?.resolutiondate || '',
-    resolution: issue.fields?.resolution?.name || ''
-  }));
+  try { return await searchAssetTickets(assetId, legacyKeys); }
+  catch { return legacyKeys.map((key) => ({ key })); }
+});
+
+resolver.define('getAssetReport', async () => {
+  const assets = await queryAllByPrefix(ASSET_PREFIX);
+  const links = await queryAllByPrefix(LINK_PREFIX);
+  const rows = [];
+  for (let start = 0; start < assets.length; start += 5) {
+    const batch = assets.slice(start, start + 5);
+    const batchRows = await Promise.all(batch.map(async (asset) => {
+      const legacyKeys = links.filter((link) => link?.assetId === asset.id).map((link) => link.issueKey).filter(Boolean);
+      try {
+        const tickets = await searchAssetTickets(asset.id, legacyKeys);
+        const open = tickets.filter((ticket) => !ticket.resolved && ticket.statusCategory !== 'done').length;
+        return { assetId: asset.id, name: asset.name, type: asset.type, status: asset.status, assigneeName: asset.assigneeName || '', total: tickets.length, open, resolved: tickets.length - open, lastFault: tickets.find((ticket) => ticket.created)?.created || '', error: false };
+      } catch {
+        return { assetId: asset.id, name: asset.name, type: asset.type, status: asset.status, assigneeName: asset.assigneeName || '', total: null, open: null, resolved: null, lastFault: '', error: true };
+      }
+    }));
+    rows.push(...batchRows);
+  }
+  return rows.sort((a, b) => (b.total ?? -1) - (a.total ?? -1) || String(b.lastFault || '').localeCompare(String(a.lastFault || '')) || String(a.name).localeCompare(String(b.name)));
 });
 
 export const handler = resolver.getDefinitions();
