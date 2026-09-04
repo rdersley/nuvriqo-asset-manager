@@ -82,6 +82,12 @@ jobs:
       - name: Install Device field UI dependencies
         run: npm --prefix field-static install
 
+      - name: Build Asset Manager UI
+        run: npm --prefix static run build
+
+      - name: Build Device field UI
+        run: npm --prefix field-static run build
+
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
 
