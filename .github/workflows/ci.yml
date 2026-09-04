@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -51,3 +52,51 @@ jobs:
 
       - name: Forge lint
         run: forge lint
+
+  deploy-sandbox:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: retailinmotion-sandbox1
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      FORGE_SITE: retailinmotion-sandbox1.atlassian.net
+      FORGE_ENVIRONMENT: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts
+
+      - name: Install Asset Manager UI dependencies
+        run: npm --prefix static install
+
+      - name: Install Device field UI dependencies
+        run: npm --prefix field-static install
+
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli@latest
+
+      - name: Disable Forge usage analytics
+        run: forge settings set usage-analytics false
+
+      - name: Deploy to Forge development
+        run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
+
+      - name: Install or upgrade on Retail in Motion sandbox
+        shell: bash
+        run: |
+          if forge install --upgrade all --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive; then
+            echo "Existing sandbox installation upgraded successfully."
+          else
+            echo "No upgradeable installation found; attempting first install."
+            forge install --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive
+          fi
