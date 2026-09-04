@@ -21,12 +21,17 @@ Core implementation now includes:
 - Assignment, Device Name, status and location history
 - Asset detail and activity timeline
 - Jira issue panel for linking a ticket to a device
-- Linked Jira ticket history on each asset
 - Jira `Device` custom field with a Device Name-only picker
 - Device custom field object value retains the internal asset ID while displaying only the Device Name
-- Asset delete flow
+- Per-device Jira fault/support history with status, type, priority, assignee, created and resolved dates
+- Per-device fault KPIs for total, open, resolved, 30-day and 90-day activity
+- Fleet-level Asset Reporting ranked by fault count, including repeat-problem devices
+- Asset report CSV export
+- Jira ticket history pagination using the current `nextPageToken` search API
+- Deletion protection for both legacy issue links and Device custom-field ticket relationships
 - Paginated Forge KVS reads for larger registers
 - GitHub Actions build validation for the main UI and Device field UI
+- Authenticated Forge lint in GitHub Actions
 
 ## Asset model
 
@@ -36,7 +41,7 @@ Core fields are internal asset ID, unique Device Name, type, manufacturer, model
 
 - `asset:<id>` — asset records
 - `asset-name:<normalised-name>` — unique Device Name index
-- `issue-link:<issueKey>` — issue-to-asset link records
+- `issue-link:<issueKey>` — legacy issue-to-asset link records
 - `asset-history:<assetId>:<timestamp>:<id>` — asset activity history
 - `settings:asset-manager` — admin configuration
 
@@ -50,15 +55,17 @@ Device Name is required. Duplicate Device Names are rejected both within an impo
 
 ## First deployment gate
 
-Before calling the initial version complete:
+The V1 code scope is complete when CI is green. Before promoting to `1.0.0`:
 
-1. GitHub Actions must successfully build both Custom UIs and syntax-check the resolver.
-2. Run `forge lint` locally against the registered app.
-3. Deploy to the Forge development environment.
-4. Install on the Nuvriqo Jira site.
-5. Perform live smoke tests for manual create/edit/delete, CSV import, Excel import, Device picker, Jira user assignment and linked tickets.
-6. Resolve any Forge manifest or permission issues found in the development install.
+1. Run or confirm authenticated Forge lint.
+2. Deploy the current `main` branch to the Forge development environment.
+3. Install or upgrade on the Nuvriqo Jira site.
+4. Perform the live smoke tests in `RELEASE_CHECKLIST.md`.
+5. Fix any release-blocking defect discovered in the real Jira environment.
+6. Promote the package to `1.0.0` only after that live gate passes.
 
 ## Deliberately later
 
 The JSM portal device picker and portal request detail experience are intentionally deferred until after the core V1 is stable. V1 also avoids CMDB schemas, dependency maps, discovery and AQL-style querying.
+
+A future V2 can add optional SOTI MobiControl integration without changing the deliberately simple V1 asset-management model.
