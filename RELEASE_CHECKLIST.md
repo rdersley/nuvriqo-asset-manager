@@ -8,6 +8,10 @@ Target: 0.9.x release candidate leading to the first 1.0.0 release.
 - [x] Asset Manager Custom UI build in GitHub Actions
 - [x] Device custom-field UI build in GitHub Actions
 - [x] Import validation regression tests in GitHub Actions
+- [x] Authenticated Forge lint in GitHub Actions
+- [x] Jira ticket history supports `nextPageToken` pagination beyond 100 issues
+- [x] Delete flow checks both legacy links and Device custom-field Jira relationships
+- [x] Fleet-level reporting implementation is present
 
 ## Forge gate
 
@@ -31,6 +35,8 @@ Then install or upgrade the development installation on the Nuvriqo Jira site.
 - [ ] Duplicate Device Name is rejected case-insensitively
 - [ ] Edit an asset
 - [ ] Delete an unlinked asset with confirmation
+- [ ] Attempting to delete an asset linked through the Device field is blocked
+- [ ] Attempting to delete an asset linked through the legacy issue panel is blocked
 - [ ] Search by Device Name, serial, model and assigned user
 - [ ] Filter by type, status and location
 
@@ -63,11 +69,25 @@ Then install or upgrade the development installation on the Nuvriqo Jira site.
 - [ ] Device field works on issue create/edit/transition where configured
 - [ ] Device field can be queried through JQL using its searchable properties
 
-### Ticket history
-- [ ] Ticket using the Device field appears under the asset's Linked Jira Tickets
-- [ ] Legacy issue-panel link also appears under Linked Jira Tickets
+### Fault / ticket history
+- [ ] Ticket using the Device field appears under the asset's Fault History
+- [ ] Legacy issue-panel link also appears under Fault History
 - [ ] Unlinking legacy panel link removes that relationship
-- [ ] Linked-ticket history shows issue key, summary and status
+- [ ] Fault History shows issue key, summary, status, type, priority, assignee, created and resolved dates
+- [ ] Jira issue key opens the ticket
+- [ ] Total, open and resolved counts are correct
+- [ ] Last 30-day and 90-day counts are correct
+- [ ] A device with more than 100 linked issues returns complete paginated history
+
+### Asset Reporting
+- [ ] Reports page opens successfully
+- [ ] Assets are ranked by total fault count
+- [ ] Total fault and open fault summary figures are correct
+- [ ] Devices with 3+ faults count is correct
+- [ ] Clicking a report row opens the asset detail
+- [ ] Refresh reloads report data
+- [ ] Report CSV export opens correctly
+- [ ] Jira lookup failures are clearly marked rather than displayed as zero faults
 
 ## Initial V1 release decision
 
