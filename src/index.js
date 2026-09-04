@@ -70,16 +70,12 @@ async function saveOneAsset(supplied, source = 'manual') {
   if (!clean(supplied?.name)) throw new Error('Device name is required.');
   const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
   const asset = normaliseAsset(supplied, existing || {});
-
   await assertUniqueDeviceName(asset.name, asset.id);
-
   const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
   const newNameKey = nameIndexKey(asset.name);
-
   await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset);
   await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt });
   if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey);
-
   if (!existing) {
     await addHistory(asset.id, { type: 'created', source, message: 'Asset created' });
   } else {
@@ -123,11 +119,7 @@ resolver.define('listAssets', async ({ payload }) => {
 resolver.define('searchDevices', async ({ payload }) => {
   const query = normaliseName(payload?.query || '');
   const assets = await queryAllByPrefix(ASSET_PREFIX);
-  return assets
-    .filter((asset) => !query || normaliseName(asset.name).includes(query))
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }))
-    .slice(0, 50)
-    .map((asset) => ({ id: asset.id, name: asset.name }));
+  return assets.filter((asset) => !query || normaliseName(asset.name).includes(query)).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' })).slice(0, 50).map((asset) => ({ id: asset.id, name: asset.name }));
 });
 
 resolver.define('getAssetByName', async ({ payload }) => {
@@ -158,9 +150,7 @@ resolver.define('deleteAsset', async ({ payload }) => {
   if (!asset) return { ok: true };
   const links = await queryAllByPrefix(LINK_PREFIX);
   const linkedIssues = links.filter((link) => link?.assetId === payload.id).map((link) => link.issueKey).filter(Boolean);
-  if (linkedIssues.length) {
-    throw new Error(`This device is linked to ${linkedIssues.length} Jira ticket${linkedIssues.length === 1 ? '' : 's'}. Unlink those tickets before deleting the device.`);
-  }
+  if (linkedIssues.length) throw new Error(`This device is linked to ${linkedIssues.length} Jira ticket${linkedIssues.length === 1 ? '' : 's'}. Unlink those tickets before deleting the device.`);
   await kvs.delete(`${ASSET_PREFIX}${payload.id}`);
   if (asset.name) await kvs.delete(nameIndexKey(asset.name));
   await addHistory(payload.id, { type: 'deleted', source: 'manual', message: 'Asset deleted', deviceName: asset.name });
@@ -228,17 +218,27 @@ resolver.define('unlinkAssetFromIssue', async ({ payload, context }) => {
 resolver.define('getAssetTickets', async ({ payload }) => {
   const assetId = clean(payload?.assetId || '');
   if (!assetId) return [];
-
   const links = await queryAllByPrefix(LINK_PREFIX);
   const legacyKeys = links.filter((link) => link?.assetId === assetId).map((link) => link.issueKey).filter(Boolean);
   const conditions = [`"Device".AssetId = "${assetId.replaceAll('"', '\\"')}"`];
   if (legacyKeys.length) conditions.push(`key in (${legacyKeys.join(',')})`);
   const jql = `(${conditions.join(' OR ')}) ORDER BY created DESC`;
-
-  const response = await api.asUser().requestJira(route`/rest/api/3/search/jql?jql=${jql}&fields=summary,status,created,resolutiondate&maxResults=100`, { headers: { Accept: 'application/json' } });
+  const fields = 'summary,status,issuetype,priority,assignee,created,resolutiondate,resolution';
+  const response = await api.asUser().requestJira(route`/rest/api/3/search/jql?jql=${jql}&fields=${fields}&maxResults=100`, { headers: { Accept: 'application/json' } });
   if (!response.ok) return legacyKeys.map((key) => ({ key }));
   const data = await response.json();
-  return (data.issues || []).map((issue) => ({ key: issue.key, summary: issue.fields?.summary || '', status: issue.fields?.status?.name || '', created: issue.fields?.created || '', resolved: issue.fields?.resolutiondate || '' }));
+  return (data.issues || []).map((issue) => ({
+    key: issue.key,
+    summary: issue.fields?.summary || '',
+    status: issue.fields?.status?.name || '',
+    statusCategory: issue.fields?.status?.statusCategory?.key || '',
+    issueType: issue.fields?.issuetype?.name || '',
+    priority: issue.fields?.priority?.name || '',
+    assignee: issue.fields?.assignee?.displayName || '',
+    created: issue.fields?.created || '',
+    resolved: issue.fields?.resolutiondate || '',
+    resolution: issue.fields?.resolution?.name || ''
+  }));
 });
 
 export const handler = resolver.getDefinitions();
