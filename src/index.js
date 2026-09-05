@@ -137,7 +137,7 @@ async function getJiraCustomFields() {
   if (!response.ok) throw new Error(`Could not load Jira fields (${response.status}).`);
   const fields = await response.json();
   return safeArray(fields)
-    .filter((field) => field.custom && field.id)
+    .filter((field) => String(field.id || '').startsWith('customfield_'))
     .map((field) => ({ id: field.id, name: field.name || field.id, schemaType: field.schema?.type || '', customType: field.schema?.custom || '' }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
@@ -149,8 +149,8 @@ async function resolveJiraAssetField() {
     const selected = fields.find((field) => field.id === settings.jiraAssetField.id);
     if (selected) return selected;
   }
-  const byName = fields.find((field) => normaliseName(field.name) === 'asset name');
-  return byName || null;
+  const preferredNames = ['asset name', 'device name', 'asset', 'device'];
+  return fields.find((field) => preferredNames.includes(normaliseName(field.name))) || null;
 }
 
 async function searchIssuesWithConfiguredAssetField() {
