@@ -72,13 +72,35 @@ test('randomised name simulation never creates duplicate normalised names', () =
 test('backend retains critical Jira-sync and safety contracts', () => {
   assert.match(backend, /jiraAssetField:\s*null/);
   assert.match(backend, /resolveJiraAssetField/);
-  assert.match(backend, /asset name/i);
+  assert.match(backend, /device id/i);
   assert.match(backend, /nextPageToken/);
   assert.match(backend, /syncAssetsFromJira/);
   assert.match(backend, /fieldValues\(issue\.fields\?\.\[field\.id\]\)/);
   assert.match(backend, /Could not verify whether this device is linked to Jira tickets/);
   assert.match(backend, /Clear the configured Jira asset field or unlink those tickets/);
   assert.doesNotMatch(backend, /"Device"\.AssetId/);
+});
+
+test('configured Jira field is persisted as an identifier separate from device name', () => {
+  assert.match(backend, /jiraIdentifier:\s*clean\(input\.jiraIdentifier/);
+  assert.match(backend, /jiraIdentifierFieldId/);
+  assert.match(backend, /jiraIdentifierFieldName/);
+  assert.match(backend, /asset\.jiraIdentifier \|\| asset\.name/);
+  assert.match(backend, /byLegacyName/);
+  assert.match(backend, /Migration path for assets created before Jira identifiers were stored separately/);
+  assert.match(backend, /normaliseName\(asset\.jiraIdentifier\)/);
+});
+
+test('new Jira-discovered assets keep identifier and device name separately', () => {
+  assert.match(backend, /name:\s*identifier/);
+  assert.match(backend, /jiraIdentifier:\s*identifier/);
+  assert.match(backend, /jiraIdentifierFieldId:\s*field\.id/);
+  assert.match(backend, /jiraIdentifierFieldName:\s*field\.name/);
+});
+
+test('asset search can find the configured Jira identifier', () => {
+  assert.match(backend, /asset\.jiraIdentifier/);
+  assert.match(backend, /normaliseName\(asset\.jiraIdentifier\)\.includes\(query\)/);
 });
 
 test('Forge Custom UI resources are configured for relative Vite assets', () => {
