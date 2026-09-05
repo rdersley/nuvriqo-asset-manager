@@ -1,0 +1,95 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const backend = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+const manifest = fs.readFileSync(new URL('../manifest.yml', import.meta.url), 'utf8');
+const mainVite = fs.readFileSync(new URL('../static/vite.config.js', import.meta.url), 'utf8');
+const fieldVite = fs.readFileSync(new URL('../field-static/vite.config.js', import.meta.url), 'utf8');
+
+const clean = (value) => (typeof value === 'string' ? value.trim() : value);
+const normaliseName = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
+function fieldValues(value) {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value.flatMap(fieldValues);
+  if (typeof value === 'string' || typeof value === 'number') return [String(value).trim()].filter(Boolean);
+  if (typeof value === 'object') {
+    const candidate = value.value ?? value.name ?? value.label ?? value.displayName ?? value.objectKey ?? value.key;
+    return candidate ? [String(candidate).trim()] : [];
+  }
+  return [];
+}
+
+function discoverUniqueAssetNames(values) {
+  const names = new Map();
+  for (const value of values) {
+    for (const name of fieldValues(value)) {
+      const key = normaliseName(name);
+      if (key && !names.has(key)) names.set(key, name);
+    }
+  }
+  return [...names.values()];
+}
+
+test('Jira field values support text, select, object and multi-value shapes', () => {
+  assert.deepEqual(fieldValues(' TEST DEVICE 001 '), ['TEST DEVICE 001']);
+  assert.deepEqual(fieldValues({ value: 'TEST DEVICE 002' }), ['TEST DEVICE 002']);
+  assert.deepEqual(fieldValues({ name: 'TEST DEVICE 003' }), ['TEST DEVICE 003']);
+  assert.deepEqual(fieldValues([{ value: 'A' }, { name: 'B' }, ' C ']), ['A', 'B', 'C']);
+  assert.deepEqual(fieldValues(null), []);
+  assert.deepEqual(fieldValues({ unexpected: 'ignored' }), []);
+});
+
+test('device-name matching is case-insensitive and whitespace-normalised', () => {
+  assert.equal(normaliseName('  TEST   DEVICE 001 '), 'test device 001');
+  assert.equal(normaliseName('Test Device 001'), normaliseName('test   device 001'));
+});
+
+test('Jira discovery simulation de-duplicates equivalent device names', () => {
+  const discovered = discoverUniqueAssetNames([
+    'TEST DEVICE 001',
+    ' test   device 001 ',
+    { value: 'TEST DEVICE 002' },
+    [{ name: 'TEST DEVICE 003' }, { value: 'TEST DEVICE 002' }]
+  ]);
+  assert.equal(discovered.length, 3);
+  assert.ok(discovered.some((name) => normaliseName(name) === 'test device 001'));
+  assert.ok(discovered.some((name) => normaliseName(name) === 'test device 002'));
+  assert.ok(discovered.some((name) => normaliseName(name) === 'test device 003'));
+});
+
+test('randomised name simulation never creates duplicate normalised names', () => {
+  const raw = [];
+  for (let i = 0; i < 1000; i += 1) {
+    const id = i % 125;
+    raw.push(i % 2 ? ` Device   ${id} ` : { value: `DEVICE ${id}` });
+  }
+  const discovered = discoverUniqueAssetNames(raw);
+  assert.equal(discovered.length, 125);
+  assert.equal(new Set(discovered.map(normaliseName)).size, 125);
+});
+
+test('backend retains critical Jira-sync and safety contracts', () => {
+  assert.match(backend, /jiraAssetField:\s*null/);
+  assert.match(backend, /resolveJiraAssetField/);
+  assert.match(backend, /asset name/i);
+  assert.match(backend, /nextPageToken/);
+  assert.match(backend, /syncAssetsFromJira/);
+  assert.match(backend, /fieldValues\(issue\.fields\?\.\[field\.id\]\)/);
+  assert.match(backend, /Could not verify whether this device is linked to Jira tickets/);
+  assert.match(backend, /Clear the configured Jira asset field or unlink those tickets/);
+  assert.doesNotMatch(backend, /"Device"\.AssetId/);
+});
+
+test('Forge Custom UI resources are configured for relative Vite assets', () => {
+  assert.match(mainVite, /base:\s*['"]\.\/['"]/);
+  assert.match(fieldVite, /base:\s*['"]\.\/['"]/);
+  assert.match(manifest, /path:\s*static\/dist/);
+  assert.match(manifest, /path:\s*field-static\/dist/);
+});
+
+test('manifest keeps core storage and Jira read scopes', () => {
+  for (const scope of ['storage:app', 'read:jira-work', 'read:jira-user']) {
+    assert.ok(manifest.includes(scope), `Missing required scope: ${scope}`);
+  }
+});
