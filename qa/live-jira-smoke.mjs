@@ -29,11 +29,13 @@ assert.ok(fields.length > 0, 'Jira field endpoint returned no fields.');
 const customFields = fields.filter((field) => String(field.id || '').startsWith('customfield_'));
 console.log(`Jira field discovery is healthy. Found ${fields.length} fields (${customFields.length} custom-field ids).`);
 
+// Jira enhanced search rejects completely unbounded JQL on some sites. A bounded
+// created-date query proves search access without depending on a project name/key.
 const search = await jira('/rest/api/3/search/jql', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    jql: 'ORDER BY created DESC',
+    jql: 'created >= -3650d ORDER BY created DESC',
     fields: ['summary', 'status'],
     maxResults: 5
   })
