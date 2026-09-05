@@ -91,15 +91,19 @@ test('Jira metadata mappings update location, type and crew code from matching t
   assert.match(backend, /jiraCrewCodeField/);
   assert.match(backend, /latestIssueForIdentifier/);
   assert.match(backend, /crewCode/);
-  assert.match(backend, /mappedCrewUser/);
-  assert.match(backend, /assigneeAccountId:crewUser\.accountId/);
 });
 
-test('configuration UI exposes field mappings and crew-user mapping controls', () => {
+test('crew code ownership works without a Jira account', () => {
+  assert.match(backend, /mappedCrewPerson/);
+  assert.match(backend, /crewPerson\?\.displayName\|\|crewCode/);
+  assert.match(backend, /holderAccountId=crewPerson\?\.accountId\|\|''/);
+  assert.match(backend, /m\.crewCode&&\(m\.displayName\|\|m\.accountId\)/);
+});
+
+test('configuration UI exposes field mappings and crew ownership controls', () => {
   assert.match(frontend, /Jira location \/ base field/);
   assert.match(frontend, /Jira device type field/);
   assert.match(frontend, /Jira crew code field/);
-  assert.match(frontend, /Crew code → Jira user mappings/);
 });
 
 test('asset register exposes the latest fault per device', () => {
