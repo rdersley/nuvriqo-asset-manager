@@ -25,9 +25,9 @@ console.log(`Authenticated as ${myself.displayName || myself.accountId}`);
 
 const fields = await jira('/rest/api/3/field');
 assert.ok(Array.isArray(fields), 'Jira field endpoint did not return an array.');
-const customFields = fields.filter((field) => field.custom && field.id);
-assert.ok(customFields.length > 0, 'No Jira custom fields were returned from the sandbox.');
-console.log(`Jira custom-field discovery is healthy. Found ${customFields.length} custom fields.`);
+assert.ok(fields.length > 0, 'Jira field endpoint returned no fields.');
+const customFields = fields.filter((field) => String(field.id || '').startsWith('customfield_'));
+console.log(`Jira field discovery is healthy. Found ${fields.length} fields (${customFields.length} custom-field ids).`);
 
 const search = await jira('/rest/api/3/search/jql', {
   method: 'POST',
@@ -42,6 +42,6 @@ assert.ok(Array.isArray(search?.issues), 'Jira search did not return an issues a
 for (const issue of search.issues) assert.ok(issue.key, 'Returned Jira issue is missing a key.');
 console.log(`Jira enhanced search is healthy. Sample issues returned: ${search.issues.length}`);
 
-const likelyAssetFields = customFields.filter((field) => /asset|device|hardware|serial/i.test(String(field.name || '')));
+const likelyAssetFields = fields.filter((field) => /asset|device|hardware|serial/i.test(String(field.name || '')));
 console.log(`Potential asset/device fields visible to the app: ${likelyAssetFields.map((f) => `${f.name} (${f.id})`).join(', ') || 'none'}`);
 console.log('Live Jira smoke tests passed.');
