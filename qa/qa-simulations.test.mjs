@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const backend = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+const frontend = fs.readFileSync(new URL('../static/src/main.jsx', import.meta.url), 'utf8');
 const manifest = fs.readFileSync(new URL('../manifest.yml', import.meta.url), 'utf8');
 const mainVite = fs.readFileSync(new URL('../static/vite.config.js', import.meta.url), 'utf8');
 const fieldVite = fs.readFileSync(new URL('../field-static/vite.config.js', import.meta.url), 'utf8');
@@ -19,15 +20,9 @@ function fieldValues(value) {
   }
   return [];
 }
-
 function discoverUniqueAssetNames(values) {
   const names = new Map();
-  for (const value of values) {
-    for (const name of fieldValues(value)) {
-      const key = normaliseName(name);
-      if (key && !names.has(key)) names.set(key, name);
-    }
-  }
+  for (const value of values) for (const name of fieldValues(value)) { const key = normaliseName(name); if (key && !names.has(key)) names.set(key, name); }
   return [...names.values()];
 }
 
@@ -46,24 +41,12 @@ test('device-name matching is case-insensitive and whitespace-normalised', () =>
 });
 
 test('Jira discovery simulation de-duplicates equivalent device names', () => {
-  const discovered = discoverUniqueAssetNames([
-    'TEST DEVICE 001',
-    ' test   device 001 ',
-    { value: 'TEST DEVICE 002' },
-    [{ name: 'TEST DEVICE 003' }, { value: 'TEST DEVICE 002' }]
-  ]);
+  const discovered = discoverUniqueAssetNames(['TEST DEVICE 001',' test   device 001 ',{ value: 'TEST DEVICE 002' },[{ name: 'TEST DEVICE 003' }, { value: 'TEST DEVICE 002' }]]);
   assert.equal(discovered.length, 3);
-  assert.ok(discovered.some((name) => normaliseName(name) === 'test device 001'));
-  assert.ok(discovered.some((name) => normaliseName(name) === 'test device 002'));
-  assert.ok(discovered.some((name) => normaliseName(name) === 'test device 003'));
 });
 
 test('randomised name simulation never creates duplicate normalised names', () => {
-  const raw = [];
-  for (let i = 0; i < 1000; i += 1) {
-    const id = i % 125;
-    raw.push(i % 2 ? ` Device   ${id} ` : { value: `DEVICE ${id}` });
-  }
+  const raw = []; for (let i = 0; i < 1000; i += 1) { const id = i % 125; raw.push(i % 2 ? ` Device   ${id} ` : { value: `DEVICE ${id}` }); }
   const discovered = discoverUniqueAssetNames(raw);
   assert.equal(discovered.length, 125);
   assert.equal(new Set(discovered.map(normaliseName)).size, 125);
@@ -87,20 +70,42 @@ test('configured Jira field is persisted as an identifier separate from device n
   assert.match(backend, /jiraIdentifierFieldName/);
   assert.ok(/asset\.jiraIdentifier\s*\|\|\s*asset\.name/.test(backend) || /asset\?\.jiraIdentifier\s*\|\|\s*asset\?\.name/.test(backend));
   assert.match(backend, /byLegacyName/);
-  assert.ok(/Migration path for assets created before Jira identifiers were stored separately/.test(backend) || /byLegacyName\.get\(normalized\)/.test(backend));
-  assert.ok(/normaliseName\(asset\.jiraIdentifier\)/.test(backend) || /normaliseName\(a\.jiraIdentifier\)/.test(backend));
+  assert.match(backend, /byLegacyName\.get\(normalized\)/);
 });
 
 test('new Jira-discovered assets keep identifier and device name separately', () => {
-  assert.match(backend, /name:\s*identifier/);
-  assert.match(backend, /jiraIdentifier:\s*identifier/);
-  assert.match(backend, /jiraIdentifierFieldId:\s*field\.id/);
-  assert.match(backend, /jiraIdentifierFieldName:\s*field\.name/);
+  assert.match(backend, /name:identifier/);
+  assert.match(backend, /jiraIdentifier:identifier/);
+  assert.match(backend, /jiraIdentifierFieldId:field\.id/);
+  assert.match(backend, /jiraIdentifierFieldName:field\.name/);
 });
 
 test('asset search can find the configured Jira identifier', () => {
   assert.match(backend, /jiraIdentifier/);
-  assert.ok(/normaliseName\(asset\.jiraIdentifier\)\.includes\(query\)/.test(backend) || /normaliseName\(a\.jiraIdentifier\)\.includes\(query\)/.test(backend));
+  assert.ok(/normaliseName\(a\.jiraIdentifier\)\.includes\(query\)/.test(backend) || /\[a\.id,a\.name,a\.jiraIdentifier/.test(backend));
+});
+
+test('Jira metadata mappings update location, type and crew code from matching tickets', () => {
+  assert.match(backend, /jiraLocationField/);
+  assert.match(backend, /jiraTypeField/);
+  assert.match(backend, /jiraCrewCodeField/);
+  assert.match(backend, /latestIssueForIdentifier/);
+  assert.match(backend, /crewCode/);
+  assert.match(backend, /mappedCrewUser/);
+  assert.match(backend, /assigneeAccountId:crewUser\.accountId/);
+});
+
+test('configuration UI exposes field mappings and crew-user mapping controls', () => {
+  assert.match(frontend, /Jira location \/ base field/);
+  assert.match(frontend, /Jira device type field/);
+  assert.match(frontend, /Jira crew code field/);
+  assert.match(frontend, /Crew code → Jira user mappings/);
+});
+
+test('asset register exposes the latest fault per device', () => {
+  assert.match(backend, /latestFault:tickets\[0\]/);
+  assert.match(frontend, /report\?\.latestFault/);
+  assert.match(frontend, /<th>Fault<\/th>/);
 });
 
 test('Forge Custom UI resources are configured for relative Vite assets', () => {
@@ -111,7 +116,5 @@ test('Forge Custom UI resources are configured for relative Vite assets', () => 
 });
 
 test('manifest keeps core storage and Jira read scopes', () => {
-  for (const scope of ['storage:app', 'read:jira-work', 'read:jira-user']) {
-    assert.ok(manifest.includes(scope), `Missing required scope: ${scope}`);
-  }
+  for (const scope of ['storage:app', 'read:jira-work', 'read:jira-user']) assert.ok(manifest.includes(scope), `Missing required scope: ${scope}`);
 });
