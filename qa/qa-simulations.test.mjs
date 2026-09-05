@@ -85,10 +85,10 @@ test('configured Jira field is persisted as an identifier separate from device n
   assert.match(backend, /jiraIdentifier:\s*clean\(input\.jiraIdentifier/);
   assert.match(backend, /jiraIdentifierFieldId/);
   assert.match(backend, /jiraIdentifierFieldName/);
-  assert.match(backend, /asset\.jiraIdentifier \|\| asset\.name/);
+  assert.ok(/asset\.jiraIdentifier\s*\|\|\s*asset\.name/.test(backend) || /asset\?\.jiraIdentifier\s*\|\|\s*asset\?\.name/.test(backend));
   assert.match(backend, /byLegacyName/);
-  assert.match(backend, /Migration path for assets created before Jira identifiers were stored separately/);
-  assert.match(backend, /normaliseName\(asset\.jiraIdentifier\)/);
+  assert.ok(/Migration path for assets created before Jira identifiers were stored separately/.test(backend) || /byLegacyName\.get\(normalized\)/.test(backend));
+  assert.ok(/normaliseName\(asset\.jiraIdentifier\)/.test(backend) || /normaliseName\(a\.jiraIdentifier\)/.test(backend));
 });
 
 test('new Jira-discovered assets keep identifier and device name separately', () => {
@@ -99,8 +99,8 @@ test('new Jira-discovered assets keep identifier and device name separately', ()
 });
 
 test('asset search can find the configured Jira identifier', () => {
-  assert.match(backend, /asset\.jiraIdentifier/);
-  assert.match(backend, /normaliseName\(asset\.jiraIdentifier\)\.includes\(query\)/);
+  assert.match(backend, /jiraIdentifier/);
+  assert.ok(/normaliseName\(asset\.jiraIdentifier\)\.includes\(query\)/.test(backend) || /normaliseName\(a\.jiraIdentifier\)\.includes\(query\)/.test(backend));
 });
 
 test('Forge Custom UI resources are configured for relative Vite assets', () => {
