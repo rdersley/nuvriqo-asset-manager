@@ -36,6 +36,9 @@ function normaliseAsset(input = {}, existing = {}) {
     ...existing,
     id,
     name: clean(input.name ?? existing.name ?? ''),
+    jiraIdentifier: clean(input.jiraIdentifier ?? existing.jiraIdentifier ?? ''),
+    jiraIdentifierFieldId: clean(input.jiraIdentifierFieldId ?? existing.jiraIdentifierFieldId ?? ''),
+    jiraIdentifierFieldName: clean(input.jiraIdentifierFieldName ?? existing.jiraIdentifierFieldName ?? ''),
     type: clean(input.type ?? existing.type ?? 'Other'),
     manufacturer: clean(input.manufacturer ?? existing.manufacturer ?? ''),
     model: clean(input.model ?? existing.model ?? ''),
@@ -81,6 +84,7 @@ async function saveOneAsset(supplied, source = 'manual') {
   } else {
     const changes = [];
     if (existing.name !== asset.name) changes.push({ field: 'device name', from: existing.name || '', to: asset.name || '' });
+    if (existing.jiraIdentifier !== asset.jiraIdentifier) changes.push({ field: asset.jiraIdentifierFieldName || 'Jira device identifier', from: existing.jiraIdentifier || '', to: asset.jiraIdentifier || '' });
     if ((existing.assigneeAccountId || existing.assigneeName) !== (asset.assigneeAccountId || asset.assigneeName)) changes.push({ field: 'assignee', from: existing.assigneeName || 'Unassigned', to: asset.assigneeName || 'Unassigned' });
     if (existing.status !== asset.status) changes.push({ field: 'status', from: existing.status || '', to: asset.status || '' });
     if (existing.location !== asset.location) changes.push({ field: 'location', from: existing.location || '', to: asset.location || '' });
@@ -149,7 +153,7 @@ async function resolveJiraAssetField() {
     const selected = fields.find((field) => field.id === settings.jiraAssetField.id);
     if (selected) return selected;
   }
-  const preferredNames = ['asset name', 'device name', 'asset', 'device'];
+  const preferredNames = ['device id', 'asset id', 'asset name', 'device name', 'asset', 'device'];
   return fields.find((field) => preferredNames.includes(normaliseName(field.name))) || null;
 }
 
@@ -181,23 +185,69 @@ async function syncAssetsFromJira(force = false) {
   const previous = await kvs.get(SYNC_KEY);
   if (!force && previous?.timestamp && Date.now() - new Date(previous.timestamp).getTime() < 60000) return previous;
   const { field, issues } = await searchIssuesWithConfiguredAssetField();
-  if (!field) return { timestamp: now(), field: null, discovered: 0, created: 0 };
-  const discoveredNames = new Map();
+  if (!field) return { timestamp: now(), field: null, discovered: 0, created: 0, matched: 0 };
+  const discoveredIdentifiers = new Map();
   for (const issue of issues) {
-    for (const name of fieldValues(issue.fields?.[field.id])) {
-      const normalized = normaliseName(name);
-      if (normalized && !discoveredNames.has(normalized)) discoveredNames.set(normalized, name);
+    for (const identifier of fieldValues(issue.fields?.[field.id])) {
+      const normalized = normaliseName(identifier);
+      if (normalized && !discoveredIdentifiers.has(normalized)) discoveredIdentifiers.set(normalized, identifier);
     }
   }
+
+  const assets = await queryAllByPrefix(ASSET_PREFIX);
+  const byIdentifier = new Map();
+  const byLegacyName = new Map();
+  for (const asset of assets) {
+    if (asset.jiraIdentifier) byIdentifier.set(normaliseName(asset.jiraIdentifier), asset);
+    if (asset.name) byLegacyName.set(normaliseName(asset.name), asset);
+  }
+
   let created = 0;
-  for (const name of discoveredNames.values()) {
-    const indexed = await kvs.get(nameIndexKey(name));
-    if (!indexed?.assetId) {
-      await saveOneAsset({ name, type: 'Other', status: 'In Use', notes: `Discovered automatically from Jira field “${field.name}”.` }, 'jira-sync');
+  let matched = 0;
+  for (const identifier of discoveredIdentifiers.values()) {
+    const normalized = normaliseName(identifier);
+    let asset = byIdentifier.get(normalized);
+    if (!asset) {
+      // Migration path for assets created before Jira identifiers were stored separately.
+      asset = byLegacyName.get(normalized);
+      if (asset) {
+        asset = await saveOneAsset({
+          ...asset,
+          jiraIdentifier: identifier,
+          jiraIdentifierFieldId: field.id,
+          jiraIdentifierFieldName: field.name
+        }, 'jira-sync');
+        byIdentifier.set(normalized, asset);
+        matched += 1;
+      }
+    } else {
+      matched += 1;
+      if (asset.jiraIdentifierFieldId !== field.id || asset.jiraIdentifierFieldName !== field.name) {
+        asset = await saveOneAsset({
+          ...asset,
+          jiraIdentifier: identifier,
+          jiraIdentifierFieldId: field.id,
+          jiraIdentifierFieldName: field.name
+        }, 'jira-sync');
+        byIdentifier.set(normalized, asset);
+      }
+    }
+    if (!asset) {
+      asset = await saveOneAsset({
+        name: identifier,
+        jiraIdentifier: identifier,
+        jiraIdentifierFieldId: field.id,
+        jiraIdentifierFieldName: field.name,
+        type: 'Other',
+        status: 'In Use',
+        notes: `Discovered automatically from Jira field “${field.name}”.`
+      }, 'jira-sync');
+      byIdentifier.set(normalized, asset);
+      byLegacyName.set(normaliseName(asset.name), asset);
       created += 1;
     }
   }
-  const result = { timestamp: now(), field, discovered: discoveredNames.size, created };
+  const result = { timestamp: now(), field, discovered: discoveredIdentifiers.size, created, matched };
   await kvs.set(SYNC_KEY, result);
   return result;
 }
@@ -205,10 +255,10 @@ async function syncAssetsFromJira(force = false) {
 async function searchAssetTickets(assetId, legacyKeys = []) {
   const asset = await kvs.get(`${ASSET_PREFIX}${assetId}`);
   const matched = [];
-  if (asset?.name) {
+  if (asset?.jiraIdentifier || asset?.name) {
     const { field, issues } = await searchIssuesWithConfiguredAssetField();
     if (field) {
-      const target = normaliseName(asset.name);
+      const target = normaliseName(asset.jiraIdentifier || asset.name);
       for (const issue of issues) {
         if (fieldValues(issue.fields?.[field.id]).some((value) => normaliseName(value) === target)) matched.push(issue);
       }
@@ -239,7 +289,7 @@ resolver.define('listAssets', async ({ payload }) => {
   const type = clean(payload?.type || '');
   const location = clean(payload?.location || '');
   let assets = await queryAllByPrefix(ASSET_PREFIX);
-  if (query) assets = assets.filter((asset) => [asset.id, asset.name, asset.type, asset.manufacturer, asset.model, asset.serialNumber, asset.assigneeName, asset.status, asset.location].some((value) => String(value || '').toLowerCase().includes(query)));
+  if (query) assets = assets.filter((asset) => [asset.id, asset.name, asset.jiraIdentifier, asset.type, asset.manufacturer, asset.model, asset.serialNumber, asset.assigneeName, asset.status, asset.location].some((value) => String(value || '').toLowerCase().includes(query)));
   if (status) assets = assets.filter((asset) => asset.status === status);
   if (type) assets = assets.filter((asset) => asset.type === type);
   if (location) assets = assets.filter((asset) => asset.location === location);
@@ -253,7 +303,7 @@ resolver.define('getJiraCustomFields', async () => getJiraCustomFields());
 resolver.define('searchDevices', async ({ payload }) => {
   const query = normaliseName(payload?.query || '');
   const assets = await queryAllByPrefix(ASSET_PREFIX);
-  return assets.filter((asset) => !query || normaliseName(asset.name).includes(query)).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' })).slice(0, 50).map((asset) => ({ id: asset.id, name: asset.name }));
+  return assets.filter((asset) => !query || normaliseName(asset.name).includes(query) || normaliseName(asset.jiraIdentifier).includes(query)).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' })).slice(0, 50).map((asset) => ({ id: asset.id, name: asset.name }));
 });
 
 resolver.define('getAssetByName', async ({ payload }) => {
