@@ -8,12 +8,14 @@ const ASSET_NAME_PREFIX = 'asset-name:';
 const LINK_PREFIX = 'issue-link:';
 const HISTORY_PREFIX = 'asset-history:';
 const SETTINGS_KEY = 'settings:asset-manager';
+const SYNC_KEY = 'sync:asset-manager:jira-field';
 
 const DEFAULT_SETTINGS = {
   assetTypes: ['Laptop', 'Desktop', 'Mobile', 'Tablet', 'Monitor', 'Printer', 'Accessory', 'Other'],
   statuses: ['Ordered', 'Available', 'In Use', 'Repair', 'Lost', 'Retired'],
   locations: [],
-  customFields: []
+  customFields: [],
+  jiraAssetField: null
 };
 
 const now = () => new Date().toISOString();
@@ -75,7 +77,7 @@ async function saveOneAsset(supplied, source = 'manual') {
   await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt });
   if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey);
   if (!existing) {
-    await addHistory(asset.id, { type: 'created', source, message: 'Asset created' });
+    await addHistory(asset.id, { type: 'created', source, message: source === 'jira-sync' ? 'Asset discovered from Jira' : 'Asset created' });
   } else {
     const changes = [];
     if (existing.name !== asset.name) changes.push({ field: 'device name', from: existing.name || '', to: asset.name || '' });
@@ -115,11 +117,48 @@ function ticketFields(issue) {
   };
 }
 
-async function searchAssetTickets(assetId, legacyKeys = []) {
-  const conditions = [`"Device".AssetId = "${assetId.replaceAll('"', '\\"')}"`];
-  if (legacyKeys.length) conditions.push(`key in (${legacyKeys.join(',')})`);
-  const jql = `(${conditions.join(' OR ')}) ORDER BY created DESC`;
-  const fields = ['summary', 'status', 'issuetype', 'priority', 'assignee', 'created', 'resolutiondate', 'resolution'];
+function fieldValues(value) {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value.flatMap(fieldValues);
+  if (typeof value === 'string' || typeof value === 'number') return [String(value).trim()].filter(Boolean);
+  if (typeof value === 'object') {
+    const candidate = value.value ?? value.name ?? value.label ?? value.displayName ?? value.objectKey ?? value.key;
+    return candidate ? [String(candidate).trim()] : [];
+  }
+  return [];
+}
+
+async function getSettingsValue() {
+  return { ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) };
+}
+
+async function getJiraCustomFields() {
+  const response = await api.asUser().requestJira(route`/rest/api/3/field`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error(`Could not load Jira fields (${response.status}).`);
+  const fields = await response.json();
+  return safeArray(fields)
+    .filter((field) => field.custom && field.id)
+    .map((field) => ({ id: field.id, name: field.name || field.id, schemaType: field.schema?.type || '', customType: field.schema?.custom || '' }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+async function resolveJiraAssetField() {
+  const settings = await getSettingsValue();
+  const fields = await getJiraCustomFields();
+  if (settings.jiraAssetField?.id) {
+    const selected = fields.find((field) => field.id === settings.jiraAssetField.id);
+    if (selected) return selected;
+  }
+  const byName = fields.find((field) => normaliseName(field.name) === 'asset name');
+  return byName || null;
+}
+
+async function searchIssuesWithConfiguredAssetField() {
+  const field = await resolveJiraAssetField();
+  if (!field) return { field: null, issues: [] };
+  const numericId = String(field.id).replace('customfield_', '');
+  const jql = `cf[${numericId}] is not EMPTY ORDER BY created DESC`;
+  const fields = [field.id, 'summary', 'status', 'issuetype', 'priority', 'assignee', 'created', 'resolutiondate', 'resolution'];
   const issues = [];
   let nextPageToken;
   do {
@@ -130,15 +169,71 @@ async function searchAssetTickets(assetId, legacyKeys = []) {
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    if (!response.ok) throw new Error(`Jira ticket lookup failed with status ${response.status}.`);
+    if (!response.ok) throw new Error(`Jira asset-field lookup failed with status ${response.status}.`);
     const data = await response.json();
     issues.push(...safeArray(data.issues));
     nextPageToken = data.nextPageToken || null;
   } while (nextPageToken);
-  return issues.map(ticketFields);
+  return { field, issues };
+}
+
+async function syncAssetsFromJira(force = false) {
+  const previous = await kvs.get(SYNC_KEY);
+  if (!force && previous?.timestamp && Date.now() - new Date(previous.timestamp).getTime() < 60000) return previous;
+  const { field, issues } = await searchIssuesWithConfiguredAssetField();
+  if (!field) return { timestamp: now(), field: null, discovered: 0, created: 0 };
+  const discoveredNames = new Map();
+  for (const issue of issues) {
+    for (const name of fieldValues(issue.fields?.[field.id])) {
+      const normalized = normaliseName(name);
+      if (normalized && !discoveredNames.has(normalized)) discoveredNames.set(normalized, name);
+    }
+  }
+  let created = 0;
+  for (const name of discoveredNames.values()) {
+    const indexed = await kvs.get(nameIndexKey(name));
+    if (!indexed?.assetId) {
+      await saveOneAsset({ name, type: 'Other', status: 'In Use', notes: `Discovered automatically from Jira field “${field.name}”.` }, 'jira-sync');
+      created += 1;
+    }
+  }
+  const result = { timestamp: now(), field, discovered: discoveredNames.size, created };
+  await kvs.set(SYNC_KEY, result);
+  return result;
+}
+
+async function searchAssetTickets(assetId, legacyKeys = []) {
+  const asset = await kvs.get(`${ASSET_PREFIX}${assetId}`);
+  const matched = [];
+  if (asset?.name) {
+    const { field, issues } = await searchIssuesWithConfiguredAssetField();
+    if (field) {
+      const target = normaliseName(asset.name);
+      for (const issue of issues) {
+        if (fieldValues(issue.fields?.[field.id]).some((value) => normaliseName(value) === target)) matched.push(issue);
+      }
+    }
+  }
+  if (legacyKeys.length) {
+    const existing = new Set(matched.map((issue) => issue.key));
+    const missingKeys = legacyKeys.filter((key) => !existing.has(key));
+    if (missingKeys.length) {
+      const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql: `key in (${missingKeys.join(',')}) ORDER BY created DESC`, fields: ['summary', 'status', 'issuetype', 'priority', 'assignee', 'created', 'resolutiondate', 'resolution'], maxResults: 100 })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        matched.push(...safeArray(data.issues));
+      }
+    }
+  }
+  return matched.map(ticketFields).sort((a, b) => String(b.created || '').localeCompare(String(a.created || '')));
 }
 
 resolver.define('listAssets', async ({ payload }) => {
+  try { await syncAssetsFromJira(false); } catch { /* keep local register available if Jira sync fails */ }
   const query = String(payload?.query || '').toLowerCase();
   const status = clean(payload?.status || '');
   const type = clean(payload?.type || '');
@@ -151,6 +246,9 @@ resolver.define('listAssets', async ({ payload }) => {
   assets.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
   return assets;
 });
+
+resolver.define('syncAssetsFromJira', async () => syncAssetsFromJira(true));
+resolver.define('getJiraCustomFields', async () => getJiraCustomFields());
 
 resolver.define('searchDevices', async ({ payload }) => {
   const query = normaliseName(payload?.query || '');
@@ -189,7 +287,7 @@ resolver.define('deleteAsset', async ({ payload }) => {
   let linkedTickets;
   try { linkedTickets = await searchAssetTickets(payload.id, legacyKeys); }
   catch { throw new Error('Could not verify whether this device is linked to Jira tickets. Please try again before deleting it.'); }
-  if (linkedTickets.length) throw new Error(`This device is linked to ${linkedTickets.length} Jira ticket${linkedTickets.length === 1 ? '' : 's'}. Clear the Device field or unlink those tickets before deleting the device.`);
+  if (linkedTickets.length) throw new Error(`This device is linked to ${linkedTickets.length} Jira ticket${linkedTickets.length === 1 ? '' : 's'}. Clear the configured Jira asset field or unlink those tickets before deleting the device.`);
   await kvs.delete(`${ASSET_PREFIX}${payload.id}`);
   if (asset.name) await kvs.delete(nameIndexKey(asset.name));
   await addHistory(payload.id, { type: 'deleted', source: 'manual', message: 'Asset deleted', deviceName: asset.name });
@@ -202,18 +300,20 @@ resolver.define('getAssetHistory', async ({ payload }) => {
   return history.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
 });
 
-resolver.define('getSettings', async () => ({ ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) }));
+resolver.define('getSettings', async () => getSettingsValue());
 resolver.define('saveSettings', async ({ payload }) => {
   const incoming = payload?.settings || {};
   const settings = {
     assetTypes: safeArray(incoming.assetTypes).map(clean).filter(Boolean),
     statuses: safeArray(incoming.statuses).map(clean).filter(Boolean),
     locations: safeArray(incoming.locations).map(clean).filter(Boolean),
-    customFields: safeArray(incoming.customFields).map((field) => ({ key: clean(field.key), label: clean(field.label), type: clean(field.type || 'text') })).filter((field) => field.key && field.label)
+    customFields: safeArray(incoming.customFields).map((field) => ({ key: clean(field.key), label: clean(field.label), type: clean(field.type || 'text') })).filter((field) => field.key && field.label),
+    jiraAssetField: incoming.jiraAssetField?.id ? { id: clean(incoming.jiraAssetField.id), name: clean(incoming.jiraAssetField.name || incoming.jiraAssetField.id) } : null
   };
   if (!settings.assetTypes.length) settings.assetTypes = DEFAULT_SETTINGS.assetTypes;
   if (!settings.statuses.length) settings.statuses = DEFAULT_SETTINGS.statuses;
   await kvs.set(SETTINGS_KEY, settings);
+  await kvs.delete(SYNC_KEY);
   return settings;
 });
 
@@ -264,6 +364,7 @@ resolver.define('getAssetTickets', async ({ payload }) => {
 });
 
 resolver.define('getAssetReport', async () => {
+  try { await syncAssetsFromJira(false); } catch { /* reporting still works for local assets */ }
   const assets = await queryAllByPrefix(ASSET_PREFIX);
   const links = await queryAllByPrefix(LINK_PREFIX);
   const rows = [];
