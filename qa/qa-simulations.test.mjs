@@ -34,6 +34,8 @@ test('assignment reference ownership works without Jira account', () => { assert
 test('manual holder entry stays free text', () => { assert.match(frontend,/Enter person, assignment reference, or search Jira/); assert.match(frontend,/invoke\('searchUsers'/); });
 test('placeholder identifiers are rejected', () => { assert.match(backend,/validIdentifier/); assert.match(backend,/autoDiscovered&&!validIdentifier\(identifier\)/); });
 test('configuration UI uses generic assignment-reference wording and save feedback', () => { assert.match(frontend,/Jira assignment reference field/); assert.match(frontend,/Assignment reference → holder mappings/); assert.match(frontend,/Saving…/); assert.match(frontend,/saveStage/); });
+test('configuration textareas preserve raw multiline editing until save', () => { assert.match(frontend,/assetTypesText/); assert.match(frontend,/statusesText/); assert.match(frontend,/locationsText/); assert.match(frontend,/crewMappingsText/); assert.match(frontend,/customFieldsText/); assert.match(frontend,/compileSettings/); });
+test('Jira discovery can be disabled while one-off scanning remains available', () => { assert.match(backend,/jiraDiscoveryEnabled:\s*true/); assert.match(backend,/jiraDiscoveryEnabled:incoming\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/Automatically scan and import assets from the mapped Jira Device ID field/); assert.match(frontend,/Scan & import Device IDs now/); assert.match(frontend,/cfg\.jiraAssetField\?\.id&&cfg\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/saved\.jiraAssetField\?\.id&&saved\.jiraDiscoveryEnabled!==false/); });
 test('asset register exposes latest primary or related ticket', () => { assert.match(backend,/latestFault:primary\[0\]\|\|related\[0\]/); assert.match(frontend,/report\?\.latestFault/); assert.match(frontend,/<th>Fault<\/th>/); });
 
 test('Related Assets field is configurable and kept separate from primary Device ID', () => {
@@ -85,11 +87,18 @@ test('ticket autofill makes device type automatic but base and owner explicit op
   assert.match(ticketSync,/jiraLocationField/);
   assert.match(ticketSync,/jiraCrewCodeField/);
   assert.match(ticketSync,/method: 'PUT'/);
-  assert.match(deviceField,/deviceType: true, location: applyLocation, owner: applyOwner/);
-  assert.match(deviceField,/Device type is filled automatically/);
+  assert.match(deviceField,/deviceType:true,location:applyLocation,owner:applyOwner/);
+  assert.match(deviceField,/fills Device Type automatically/);
   assert.match(deviceField,/Also apply base \/ location/);
-  assert.match(deviceField,/Also apply owner \/ assignment reference/);
-  assert.match(deviceField,/never changed automatically/);
+  assert.match(deviceField,/Also apply holder \/ assignment reference/);
+  assert.match(deviceField,/Base and holder remain opt-in/);
+});
+
+test('explicit Device selection writes the mapped Jira Device ID', () => {
+  assert.match(ticketSync,/cfg\.jiraAssetField\?\.id/);
+  assert.match(ticketSync,/asset\.jiraIdentifier \|\| asset\.name/);
+  assert.match(ticketSync,/cfg\.jiraAssetField\.id/);
+  assert.match(deviceField,/Choosing an asset writes its Device ID to the mapped Jira Device ID field/);
 });
 
 test('ticket autofill is wired through a dedicated Forge resolver with write scope', () => {
