@@ -101,6 +101,14 @@ test('crew code ownership works without a Jira account', () => {
   assert.match(backend, /m\.crewCode&&\(m\.displayName\|\|m\.accountId\)/);
 });
 
+test('manual holder entry stays free text while optional Jira identity lookup remains available', () => {
+  assert.match(frontend, /Enter person, crew code, or search Jira/);
+  assert.match(frontend, /assigneeAccountId:\s*''\s*,\s*assigneeName:\s*value/);
+  assert.match(frontend, /asset\.assigneeAccountId\s*&&\s*query\s*===\s*asset\.assigneeName/);
+  assert.match(frontend, /invoke\('searchUsers',\s*\{\s*query\s*\}\)/);
+  assert.match(frontend, /assigneeAccountId:\s*user\.accountId/);
+});
+
 test('placeholder identifiers are rejected for discovery and fault matching', () => {
   assert.match(backend, /validIdentifier/);
   assert.match(backend, /\['\.', '-', 'n\/a', 'na', 'none', 'null', 'unknown'\]/);
