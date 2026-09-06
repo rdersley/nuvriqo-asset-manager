@@ -13,7 +13,7 @@ function downloadCsv(filename, headers, rows) { const csv = [headers, ...rows].m
 function UserPicker({ asset, setAsset }) {
   const [query, setQuery] = useState(asset.assigneeName || ''); const [results, setResults] = useState([]);
   useEffect(() => setQuery(asset.assigneeName || ''), [asset.assigneeName]);
-  useEffect(() => { const timer = setTimeout(async () => { if (query.trim().length < 2 || query === asset.assigneeName) return setResults([]); try { setResults(await invoke('searchUsers', { query })); } catch { setResults([]); } }, 300); return () => clearTimeout(timer); }, [query, asset.assigneeName]);
+  useEffect(() => { const timer = setTimeout(async () => { if (query.trim().length < 2 || (asset.assigneeAccountId && query === asset.assigneeName)) return setResults([]); try { setResults(await invoke('searchUsers', { query })); } catch { setResults([]); } }, 300); return () => clearTimeout(timer); }, [query, asset.assigneeName, asset.assigneeAccountId]);
   return <div className="user-picker"><input value={query} placeholder="Enter person, crew code, or search Jira…" onChange={(e) => { const value=e.target.value; setQuery(value); setAsset({ ...asset, assigneeAccountId: '', assigneeName: value }); }} />{results.length > 0 && <div className="user-results">{results.map((user) => <button type="button" key={user.accountId} onClick={() => { setAsset({ ...asset, assigneeAccountId: user.accountId, assigneeName: user.displayName }); setQuery(user.displayName); setResults([]); }}><img src={user.avatarUrl} alt="" />{user.displayName}</button>)}</div>}</div>;
 }
 
