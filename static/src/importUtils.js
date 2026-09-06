@@ -4,7 +4,7 @@ const FIELD_MAP = {
   assetid: 'id', id: 'id', assettag: 'id',
   name: 'name', devicename: 'name', device: 'name',
   deviceid: 'jiraIdentifier', jiraidentifier: 'jiraIdentifier', jiraid: 'jiraIdentifier',
-  crewcode: 'crewCode', crew: 'crewCode', externalassignmentreference: 'crewCode', assignmentreference: 'crewCode',
+  crewcode: 'crewCode', crew: 'crewCode', externalassignmentreference: 'crewCode', assignmentreference: 'crewCode', externalreference: 'crewCode', holderreference: 'crewCode',
   type: 'type', assettype: 'type', devicetype: 'type',
   manufacturer: 'manufacturer', make: 'manufacturer',
   model: 'model',
