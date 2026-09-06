@@ -35,6 +35,9 @@ jobs:
       - name: Install Issue panel UI dependencies
         run: npm --prefix panel-static install
 
+      - name: Install Customer portal UI dependencies
+        run: npm --prefix portal-static install
+
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
 
@@ -46,6 +49,7 @@ jobs:
           node --check src/index.js
           node --check src/ticket-sync.js
           node --check src/issue-panel.js
+          node --check src/portal-assets.js
 
       - name: Run import validation tests
         run: npm --prefix static test
@@ -62,6 +66,9 @@ jobs:
       - name: Build Issue panel UI
         run: npm --prefix panel-static run build
 
+      - name: Build Customer portal UI
+        run: npm --prefix portal-static run build
+
       - name: Forge lint
         shell: bash
         run: |
@@ -74,7 +81,7 @@ jobs:
             exit 0
           fi
           if echo "$output" | grep -q "0 errors, 0 warnings, 1 approval" && echo "$output" | grep -q "MAJOR_VERSION_RULE"; then
-            echo "Forge lint only requires approval for the intentional Jira write-scope major version change; continuing CI."
+            echo "Forge lint only requires approval for the intentional scope/module major version change; continuing CI."
             exit 0
           fi
           exit "$status"
@@ -134,6 +141,9 @@ jobs:
       - name: Install Issue panel UI dependencies
         run: npm --prefix panel-static install
 
+      - name: Install Customer portal UI dependencies
+        run: npm --prefix portal-static install
+
       - name: Build Asset Manager UI
         run: npm --prefix static run build
 
@@ -142,6 +152,9 @@ jobs:
 
       - name: Build Issue panel UI
         run: npm --prefix panel-static run build
+
+      - name: Build Customer portal UI
+        run: npm --prefix portal-static run build
 
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
