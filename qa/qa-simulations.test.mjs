@@ -4,11 +4,14 @@ import fs from 'node:fs';
 
 const backend = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
 const ticketSync = fs.readFileSync(new URL('../src/ticket-sync.js', import.meta.url), 'utf8');
+const issuePanel = fs.readFileSync(new URL('../src/issue-panel.js', import.meta.url), 'utf8');
 const frontend = fs.readFileSync(new URL('../static/src/main.jsx', import.meta.url), 'utf8');
 const deviceField = fs.readFileSync(new URL('../field-static/src/main.jsx', import.meta.url), 'utf8');
+const panelFrontend = fs.readFileSync(new URL('../panel-static/src/main.jsx', import.meta.url), 'utf8');
 const manifest = fs.readFileSync(new URL('../manifest.yml', import.meta.url), 'utf8');
 const mainVite = fs.readFileSync(new URL('../static/vite.config.js', import.meta.url), 'utf8');
 const fieldVite = fs.readFileSync(new URL('../field-static/vite.config.js', import.meta.url), 'utf8');
+const panelVite = fs.readFileSync(new URL('../panel-static/vite.config.js', import.meta.url), 'utf8');
 
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const normaliseName = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
@@ -45,6 +48,8 @@ test('related identifiers support multiple values in a plain text Jira field', (
   assert.match(backend,/function relatedIdentifiers/);
   assert.match(backend,/split\(\/\[,;\\n\\r\]\+\//);
   assert.match(backend,/issueMatchesRelatedIdentifier/);
+  assert.match(issuePanel,/function relatedIdentifiers/);
+  assert.match(issuePanel,/current\.join\(', '\)/);
 });
 
 test('related assets appear in history but stay out of primary fault totals', () => {
@@ -56,6 +61,20 @@ test('related assets appear in history but stay out of primary fault totals', ()
   assert.match(frontend,/Primary faults/);
   assert.match(frontend,/Related tickets/);
   assert.match(frontend,/Related asset/);
+});
+
+test('issue panel manages one primary asset and multiple related assets', () => {
+  assert.match(manifest,/function: issue-panel/);
+  assert.match(manifest,/handler: issue-panel\.handler/);
+  assert.match(manifest,/path:\s*panel-static\/dist/);
+  assert.match(issuePanel,/resolver\.define\('setPrimaryAsset'/);
+  assert.match(issuePanel,/resolver\.define\('addRelatedAsset'/);
+  assert.match(issuePanel,/resolver\.define\('removeRelatedAsset'/);
+  assert.match(issuePanel,/relation: 'primary'/);
+  assert.match(issuePanel,/relation: 'related'/);
+  assert.match(panelFrontend,/Primary asset/);
+  assert.match(panelFrontend,/Related assets/);
+  assert.match(panelFrontend,/Use <strong>Primary<\/strong>/);
 });
 
 test('ticket autofill makes device type automatic but base and owner explicit opt-ins', () => {
@@ -81,5 +100,5 @@ test('ticket autofill is wired through a dedicated Forge resolver with write sco
   assert.match(ticketSync,/resolver\.define\('searchDevices'/);
 });
 
-test('Forge Custom UI resources use relative Vite assets', () => { assert.match(mainVite,/base:\s*['"]\.\/['"]/); assert.match(fieldVite,/base:\s*['"]\.\/['"]/); assert.match(manifest,/path:\s*static\/dist/); assert.match(manifest,/path:\s*field-static\/dist/); });
+test('Forge Custom UI resources use relative Vite assets', () => { assert.match(mainVite,/base:\s*['"]\.\/['"]/); assert.match(fieldVite,/base:\s*['"]\.\/['"]/); assert.match(panelVite,/base:\s*['"]\.\/['"]/); assert.match(manifest,/path:\s*static\/dist/); assert.match(manifest,/path:\s*field-static\/dist/); assert.match(manifest,/path:\s*panel-static\/dist/); });
 test('manifest keeps core storage and Jira scopes', () => { for(const scope of ['storage:app','read:jira-work','write:jira-work','read:jira-user']) assert.ok(manifest.includes(scope),`Missing required scope: ${scope}`); });
