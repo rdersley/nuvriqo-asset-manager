@@ -31,7 +31,32 @@ test('assignment reference ownership works without Jira account', () => { assert
 test('manual holder entry stays free text', () => { assert.match(frontend,/Enter person, assignment reference, or search Jira/); assert.match(frontend,/invoke\('searchUsers'/); });
 test('placeholder identifiers are rejected', () => { assert.match(backend,/validIdentifier/); assert.match(backend,/autoDiscovered&&!validIdentifier\(identifier\)/); });
 test('configuration UI uses generic assignment-reference wording and save feedback', () => { assert.match(frontend,/Jira assignment reference field/); assert.match(frontend,/Assignment reference → holder mappings/); assert.match(frontend,/Saving…/); assert.match(frontend,/saveStage/); });
-test('asset register exposes latest fault', () => { assert.match(backend,/latestFault:tickets\[0\]/); assert.match(frontend,/report\?\.latestFault/); assert.match(frontend,/<th>Fault<\/th>/); });
+test('asset register exposes latest primary or related ticket', () => { assert.match(backend,/latestFault:primary\[0\]\|\|related\[0\]/); assert.match(frontend,/report\?\.latestFault/); assert.match(frontend,/<th>Fault<\/th>/); });
+
+test('Related Assets field is configurable and kept separate from primary Device ID', () => {
+  assert.match(backend,/jiraRelatedAssetField:\s*null/);
+  assert.match(backend,/jiraRelatedAssetField:normaliseField\(incoming\.jiraRelatedAssetField\)/);
+  assert.match(frontend,/Jira related asset field/);
+  assert.match(frontend,/Related Device ID/);
+  assert.match(frontend,/jiraRelatedAssetField:null/);
+});
+
+test('related identifiers support multiple values in a plain text Jira field', () => {
+  assert.match(backend,/function relatedIdentifiers/);
+  assert.match(backend,/split\(\/\[,;\\n\\r\]\+\//);
+  assert.match(backend,/issueMatchesRelatedIdentifier/);
+});
+
+test('related assets appear in history but stay out of primary fault totals', () => {
+  assert.match(backend,/ticketFields\(issue,'related'\)/);
+  assert.match(backend,/const primary=tickets\.filter\(t=>t\.relation==='primary'\)/);
+  assert.match(backend,/const related=tickets\.filter\(t=>t\.relation==='related'\)/);
+  assert.match(backend,/total:primary\.length/);
+  assert.match(backend,/related:related\.length/);
+  assert.match(frontend,/Primary faults/);
+  assert.match(frontend,/Related tickets/);
+  assert.match(frontend,/Related asset/);
+});
 
 test('ticket autofill makes device type automatic but base and owner explicit opt-ins', () => {
   assert.match(ticketSync,/choices\.deviceType !== false/);
