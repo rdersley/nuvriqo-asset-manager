@@ -85,12 +85,13 @@ test('asset search can find the configured Jira identifier', () => {
   assert.ok(/normaliseName\(a\.jiraIdentifier\)\.includes\(query\)/.test(backend) || /\[a\.id,a\.name,a\.jiraIdentifier/.test(backend));
 });
 
-test('Jira metadata mappings update location, type and crew code from matching tickets', () => {
+test('Jira metadata mappings use the latest populated value for each mapped field', () => {
   assert.match(backend, /jiraLocationField/);
   assert.match(backend, /jiraTypeField/);
   assert.match(backend, /jiraCrewCodeField/);
-  assert.match(backend, /latestIssueForIdentifier/);
-  assert.match(backend, /crewCode/);
+  assert.match(backend, /latestFieldValueForIdentifier/);
+  assert.match(backend, /issueMatchesIdentifier/);
+  assert.match(backend, /if\(value\)return value/);
 });
 
 test('crew code ownership works without a Jira account', () => {
@@ -98,6 +99,13 @@ test('crew code ownership works without a Jira account', () => {
   assert.match(backend, /crewPerson\?\.displayName\|\|crewCode/);
   assert.match(backend, /holderAccountId=crewPerson\?\.accountId\|\|''/);
   assert.match(backend, /m\.crewCode&&\(m\.displayName\|\|m\.accountId\)/);
+});
+
+test('placeholder identifiers are rejected for discovery and fault matching', () => {
+  assert.match(backend, /validIdentifier/);
+  assert.match(backend, /\['\.', '-', 'n\/a', 'na', 'none', 'null', 'unknown'\]/);
+  assert.match(backend, /if\(validIdentifier\(targetIdentifier\)\)/);
+  assert.match(backend, /issueMatchesIdentifier\(issue,field\.id,targetIdentifier\)/);
 });
 
 test('configuration UI exposes field mappings and crew ownership controls', () => {
