@@ -55,7 +55,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(9,30,66,.45)', display: 'grid', placeItems: 'center', zIndex: 1000, padding: 24 }}>
       <div className="card form-card" style={{ width: 'min(980px, 100%)', maxHeight: '88vh', overflow: 'auto' }}>
         <div className="section-head">
-          <div><h2>Import assets</h2><p>Upload CSV or Excel (.xlsx), review the rows, then create the valid assets. Configured custom asset fields are matched by field name or key.</p></div>
+          <div><h2>Import assets</h2><p>Upload CSV or Excel (.xlsx), review the rows, then create the valid assets. Device ID, Crew Code and Assigned Person / Holder headers are supported, and Jira account identity remains optional.</p></div>
           <button className="secondary" onClick={onClose} disabled={busy}>Close</button>
         </div>
 
@@ -69,9 +69,9 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
 
         {rows.length > 0 && <div className="table-wrap" style={{ marginTop: 12 }}>
           <table>
-            <thead><tr><th>Row</th><th>Device Name</th><th>Type</th><th>Serial</th><th>Assigned to</th><th>Result</th></tr></thead>
+            <thead><tr><th>Row</th><th>Device Name</th><th>Device ID</th><th>Type</th><th>Crew Code</th><th>Holder</th><th>Result</th></tr></thead>
             <tbody>{rows.slice(0, 200).map((row) => <tr key={`${row._row}-${row.name}`}>
-              <td>{row._row}</td><td><strong>{row.name || '—'}</strong></td><td>{row.type || '—'}</td><td>{row.serialNumber || '—'}</td><td>{row.assigneeName || '—'}</td>
+              <td>{row._row}</td><td><strong>{row.name || '—'}</strong></td><td>{row.jiraIdentifier || '—'}</td><td>{row.type || '—'}</td><td>{row.crewCode || '—'}</td><td>{row.assigneeName || '—'}</td>
               <td>{row._error ? <span style={{ fontWeight: 600 }}>{row._error}</span> : 'Ready'}</td>
             </tr>)}</tbody>
           </table>
