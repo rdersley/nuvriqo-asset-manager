@@ -32,6 +32,9 @@ jobs:
       - name: Install Device field UI dependencies
         run: npm --prefix field-static install
 
+      - name: Install Issue panel UI dependencies
+        run: npm --prefix panel-static install
+
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
 
@@ -39,7 +42,10 @@ jobs:
         run: forge settings set usage-analytics false
 
       - name: Check resolver syntax
-        run: node --check src/index.js
+        run: |
+          node --check src/index.js
+          node --check src/ticket-sync.js
+          node --check src/issue-panel.js
 
       - name: Run import validation tests
         run: npm --prefix static test
@@ -52,6 +58,9 @@ jobs:
 
       - name: Build Device field UI
         run: npm --prefix field-static run build
+
+      - name: Build Issue panel UI
+        run: npm --prefix panel-static run build
 
       - name: Forge lint
         shell: bash
@@ -122,11 +131,17 @@ jobs:
       - name: Install Device field UI dependencies
         run: npm --prefix field-static install
 
+      - name: Install Issue panel UI dependencies
+        run: npm --prefix panel-static install
+
       - name: Build Asset Manager UI
         run: npm --prefix static run build
 
       - name: Build Device field UI
         run: npm --prefix field-static run build
+
+      - name: Build Issue panel UI
+        run: npm --prefix panel-static run build
 
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
