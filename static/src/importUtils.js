@@ -3,12 +3,15 @@ import { readSheet } from 'read-excel-file/browser';
 const FIELD_MAP = {
   assetid: 'id', id: 'id', assettag: 'id',
   name: 'name', devicename: 'name', device: 'name',
+  deviceid: 'jiraIdentifier', jiraidentifier: 'jiraIdentifier', jiraid: 'jiraIdentifier',
+  crewcode: 'crewCode', crew: 'crewCode', externalassignmentreference: 'crewCode', assignmentreference: 'crewCode',
   type: 'type', assettype: 'type', devicetype: 'type',
   manufacturer: 'manufacturer', make: 'manufacturer',
   model: 'model',
   serial: 'serialNumber', serialnumber: 'serialNumber',
-  assignee: 'assigneeName', assignedto: 'assigneeName', user: 'assigneeName',
-  status: 'status', location: 'location',
+  assignee: 'assigneeName', assignedto: 'assigneeName', assigneduser: 'assigneeName', assignedperson: 'assigneeName', assignedpersonholder: 'assigneeName', holder: 'assigneeName', deviceholder: 'assigneeName', user: 'assigneeName',
+  assigneeaccountid: 'assigneeAccountId', jiraaccountid: 'assigneeAccountId', holderaccountid: 'assigneeAccountId',
+  status: 'status', location: 'location', base: 'location',
   purchasedate: 'purchaseDate', purchase: 'purchaseDate',
   warrantyexpiry: 'warrantyExpiry', warranty: 'warrantyExpiry',
   notes: 'notes'
