@@ -1,13 +1,9 @@
 name: Asset Manager CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * *'
 
 jobs:
   validate:
@@ -59,7 +55,7 @@ jobs:
         run: forge lint
 
   sandbox-readonly-qa:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,7 +76,7 @@ jobs:
         run: node qa/live-jira-smoke.mjs
 
   deploy-sandbox:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch'
     needs:
       - validate
       - sandbox-readonly-qa
