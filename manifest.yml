@@ -11,7 +11,7 @@ modules:
     - key: nuvriqo-asset-issue-panel
       resource: issue-panel
       resolver:
-        function: resolver
+        function: issue-panel
       title: Device / Asset
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
 
@@ -51,12 +51,14 @@ modules:
       handler: index.handler
     - key: ticket-sync
       handler: ticket-sync.handler
+    - key: issue-panel
+      handler: issue-panel.handler
 
 resources:
   - key: main
     path: static/dist
   - key: issue-panel
-    path: static/dist
+    path: panel-static/dist
   - key: device-field
     path: field-static/dist
 
