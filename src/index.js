@@ -10,6 +10,8 @@ const LINK_PREFIX = 'issue-link:';
 const HISTORY_PREFIX = 'asset-history:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SYNC_KEY = 'sync:asset-manager:jira-field';
+const SYNC_PROGRESS_KEY = 'sync-progress:asset-manager:jira-field';
+const SYNC_BATCH_SIZE = 20;
 
 const DEFAULT_SETTINGS = {
   assetTypes: ['Laptop', 'Desktop', 'Mobile', 'Tablet', 'Monitor', 'Printer', 'Accessory', 'Other'],
@@ -34,7 +36,30 @@ function normaliseAsset(input = {}, existing = {}) {
 async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event }); }
 async function queryAllByPrefix(prefix) { const values = []; let cursor; do { let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100); if (cursor) query = query.cursor(cursor); const page = await query.getMany(); values.push(...page.results.map((e) => e.value)); cursor = page.nextCursor; } while (cursor); return values; }
 async function assertUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); const assets = await queryAllByPrefix(ASSET_PREFIX); const duplicate = assets.find((a) => a.id !== assetId && normaliseName(a.name) === normalized); if (duplicate) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
-async function saveOneAsset(supplied, source = 'manual') { if (!clean(supplied?.name)) throw new Error('Device name is required.'); const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null; const asset = normaliseAsset(supplied, existing || {}); await assertUniqueDeviceName(asset.name, asset.id); const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null; const newNameKey = nameIndexKey(asset.name); await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset); await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt }); if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey); if (!existing) await addHistory(asset.id, { type: 'created', source, message: source === 'jira-sync' ? 'Asset discovered from Jira' : 'Asset created' }); else { const changes=[]; if(existing.name!==asset.name)changes.push({field:'device name',from:existing.name||'',to:asset.name||''}); if(existing.jiraIdentifier!==asset.jiraIdentifier)changes.push({field:asset.jiraIdentifierFieldName||'Jira device identifier',from:existing.jiraIdentifier||'',to:asset.jiraIdentifier||''}); if(existing.crewCode!==asset.crewCode)changes.push({field:'assignment reference',from:existing.crewCode||'',to:asset.crewCode||''}); if((existing.assigneeAccountId||existing.assigneeName)!==(asset.assigneeAccountId||asset.assigneeName))changes.push({field:'assigned person',from:existing.assigneeName||existing.crewCode||'Unassigned',to:asset.assigneeName||asset.crewCode||'Unassigned'}); if(existing.type!==asset.type)changes.push({field:'device type',from:existing.type||'',to:asset.type||''}); if(existing.status!==asset.status)changes.push({field:'status',from:existing.status||'',to:asset.status||''}); if(existing.location!==asset.location)changes.push({field:'location',from:existing.location||'',to:asset.location||''}); if(changes.length)await addHistory(asset.id,{type:'updated',source,message:'Asset updated',changes}); } return asset; }
+async function saveOneAsset(supplied, source = 'manual') {
+  if (!clean(supplied?.name)) throw new Error('Device name is required.');
+  const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
+  const asset = normaliseAsset(supplied, existing || {});
+  if (source !== 'jira-sync') await assertUniqueDeviceName(asset.name, asset.id);
+  const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
+  const newNameKey = nameIndexKey(asset.name);
+  await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset);
+  await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt });
+  if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey);
+  if (!existing) await addHistory(asset.id, { type: 'created', source, message: source === 'jira-sync' ? 'Asset discovered from Jira' : 'Asset created' });
+  else {
+    const changes=[];
+    if(existing.name!==asset.name)changes.push({field:'device name',from:existing.name||'',to:asset.name||''});
+    if(existing.jiraIdentifier!==asset.jiraIdentifier)changes.push({field:asset.jiraIdentifierFieldName||'Jira device identifier',from:existing.jiraIdentifier||'',to:asset.jiraIdentifier||''});
+    if(existing.crewCode!==asset.crewCode)changes.push({field:'assignment reference',from:existing.crewCode||'',to:asset.crewCode||''});
+    if((existing.assigneeAccountId||existing.assigneeName)!==(asset.assigneeAccountId||asset.assigneeName))changes.push({field:'assigned person',from:existing.assigneeName||existing.crewCode||'Unassigned',to:asset.assigneeName||asset.crewCode||'Unassigned'});
+    if(existing.type!==asset.type)changes.push({field:'device type',from:existing.type||'',to:asset.type||''});
+    if(existing.status!==asset.status)changes.push({field:'status',from:existing.status||'',to:asset.status||''});
+    if(existing.location!==asset.location)changes.push({field:'location',from:existing.location||'',to:asset.location||''});
+    if(changes.length)await addHistory(asset.id,{type:'updated',source,message:'Asset updated',changes});
+  }
+  return asset;
+}
 function ticketFields(issue) { return { key:issue.key, summary:issue.fields?.summary||'', status:issue.fields?.status?.name||'', statusCategory:issue.fields?.status?.statusCategory?.key||'', issueType:issue.fields?.issuetype?.name||'', priority:issue.fields?.priority?.name||'', assignee:issue.fields?.assignee?.displayName||'', created:issue.fields?.created||'', resolved:issue.fields?.resolutiondate||'', resolution:issue.fields?.resolution?.name||'' }; }
 function fieldValues(value) { if(value==null)return[]; if(Array.isArray(value))return value.flatMap(fieldValues); if(typeof value==='string'||typeof value==='number')return[String(value).trim()].filter(Boolean); if(typeof value==='object'){const candidate=value.value??value.name??value.label??value.displayName??value.objectKey??value.key; return candidate?[String(candidate).trim()]:[];} return[]; }
 async function getSettingsValue(){return{...DEFAULT_SETTINGS,...((await kvs.get(SETTINGS_KEY))||{})};}
@@ -44,22 +69,143 @@ async function searchIssuesWithConfiguredAssetField(){const settings=await getSe
 function issueMatchesIdentifier(issue, fieldId, identifier){const target=normaliseName(identifier);return validIdentifier(identifier)&&fieldValues(issue.fields?.[fieldId]).some(v=>normaliseName(v)===target);}
 function latestFieldValueForIdentifier(issues, identifierFieldId, identifier, valueFieldId){if(!valueFieldId||!validIdentifier(identifier))return'';for(const issue of issues){if(!issueMatchesIdentifier(issue,identifierFieldId,identifier))continue;const value=fieldValues(issue.fields?.[valueFieldId])[0]||'';if(value)return value;}return'';}
 function mappedCrewPerson(settings,crewCode){const target=normaliseName(crewCode);return safeArray(settings.crewMappings).find(m=>normaliseName(m.crewCode)===target)||null;}
-async function reconcileJiraAssets(){const assets=await queryAllByPrefix(ASSET_PREFIX);const links=await queryAllByPrefix(LINK_PREFIX);const groups=new Map();let removed=0;for(const asset of assets){const autoDiscovered=String(asset.notes||'').startsWith('Discovered automatically from Jira field');const identifier=asset.jiraIdentifier||asset.name||'';if(autoDiscovered&&!validIdentifier(identifier)){await kvs.delete(`${ASSET_PREFIX}${asset.id}`);if(asset.name)await kvs.delete(nameIndexKey(asset.name));removed+=1;continue;}if(!validIdentifier(asset.jiraIdentifier))continue;const key=normaliseName(asset.jiraIdentifier);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(asset);}for(const group of groups.values()){if(group.length<2)continue;group.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));const canonical=group[0];for(const duplicate of group.slice(1)){for(const link of links.filter(l=>l?.assetId===duplicate.id)){await kvs.set(`${LINK_PREFIX}${link.issueKey}`,{...link,assetId:canonical.id,deviceName:canonical.name});}await kvs.delete(`${ASSET_PREFIX}${duplicate.id}`);removed+=1;}await kvs.set(nameIndexKey(canonical.name),{assetId:canonical.id,name:canonical.name,updatedAt:now()});if(group.length>1)await addHistory(canonical.id,{type:'deduplicated',source:'jira-sync',message:`Reconciled ${group.length-1} duplicate Jira-discovered asset${group.length===2?'':'s'}`});}return removed;}
-async function syncAssetsFromJira(force=false){const previous=await kvs.get(SYNC_KEY);if(!force&&previous?.timestamp&&Date.now()-new Date(previous.timestamp).getTime()<60000)return previous;const reconciled=await reconcileJiraAssets();const{field,issues,settings}=await searchIssuesWithConfiguredAssetField();if(!field)return{timestamp:now(),field:null,discovered:0,created:0,matched:0,ignored:0,reconciled};const discoveredIdentifiers=new Map();let ignored=0;for(const issue of issues){for(const identifier of fieldValues(issue.fields?.[field.id])){if(!validIdentifier(identifier)){ignored+=1;continue;}const normalized=normaliseName(identifier);if(!discoveredIdentifiers.has(normalized))discoveredIdentifiers.set(normalized,identifier);}}const assets=await queryAllByPrefix(ASSET_PREFIX);const byIdentifier=new Map(),byLegacyName=new Map();for(const asset of assets){if(asset.jiraIdentifier)byIdentifier.set(normaliseName(asset.jiraIdentifier),asset);if(asset.name)byLegacyName.set(normaliseName(asset.name),asset);}let created=0,matched=0;for(const identifier of discoveredIdentifiers.values()){const normalized=normaliseName(identifier);let asset=byIdentifier.get(normalized);if(!asset){asset=byLegacyName.get(normalized);if(asset)matched+=1;}else matched+=1;const deterministicId=makeJiraAssetId(field.id,identifier);if(!asset){const concurrent=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(concurrent){asset=concurrent;matched+=1;}}const location=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraLocationField?.id);const type=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraTypeField?.id);const crewCode=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraCrewCodeField?.id);const crewPerson=crewCode?mappedCrewPerson(settings,crewCode):null;const holderName=crewCode?(crewPerson?.displayName||crewCode):'';const holderAccountId=crewPerson?.accountId||'';const base={jiraIdentifier:identifier,jiraIdentifierFieldId:field.id,jiraIdentifierFieldName:field.name};if(asset){asset=await saveOneAsset({...asset,...base,...(location?{location}:{}),...(type?{type}:{}),...(crewCode?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');byIdentifier.set(normalized,asset);}else{asset=await saveOneAsset({id:deterministicId,name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');byIdentifier.set(normalized,asset);byLegacyName.set(normaliseName(asset.name),asset);created+=1;}}const result={timestamp:now(),field,issuesScanned:issues.length,discovered:discoveredIdentifiers.size,created,matched,ignored,reconciled};await kvs.set(SYNC_KEY,result);return result;}
+async function reconcileJiraAssets(){
+  const assets=await queryAllByPrefix(ASSET_PREFIX);
+  const links=await queryAllByPrefix(LINK_PREFIX);
+  const groups=new Map();
+  let removed=0;
+  for(const asset of assets){
+    const autoDiscovered=String(asset.notes||'').startsWith('Discovered automatically from Jira field');
+    const identifier=asset.jiraIdentifier||asset.name||'';
+    if(autoDiscovered&&!validIdentifier(identifier)){
+      await kvs.delete(`${ASSET_PREFIX}${asset.id}`);
+      if(asset.name){const indexed=await kvs.get(nameIndexKey(asset.name));if(indexed?.assetId===asset.id)await kvs.delete(nameIndexKey(asset.name));}
+      removed+=1;continue;
+    }
+    if(!validIdentifier(asset.jiraIdentifier))continue;
+    const key=normaliseName(asset.jiraIdentifier);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(asset);
+  }
+  for(const group of groups.values()){
+    if(group.length<2)continue;
+    group.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));
+    const canonical=group[0];
+    for(const duplicate of group.slice(1)){
+      for(const link of links.filter(l=>l?.assetId===duplicate.id)){await kvs.set(`${LINK_PREFIX}${link.issueKey}`,{...link,assetId:canonical.id,deviceName:canonical.name});}
+      await kvs.delete(`${ASSET_PREFIX}${duplicate.id}`);
+      removed+=1;
+    }
+    await kvs.set(nameIndexKey(canonical.name),{assetId:canonical.id,name:canonical.name,updatedAt:now()});
+    await addHistory(canonical.id,{type:'deduplicated',source:'jira-sync',message:`Reconciled ${group.length-1} duplicate Jira-discovered asset${group.length===2?'':'s'}`});
+  }
+  return removed;
+}
+function discoveredIdentifiersFromIssues(issues,fieldId){
+  const discovered=new Map();let ignored=0;
+  for(const issue of issues)for(const identifier of fieldValues(issue.fields?.[fieldId])){
+    if(!validIdentifier(identifier)){ignored+=1;continue;}
+    const normalized=normaliseName(identifier);
+    if(!discovered.has(normalized))discovered.set(normalized,identifier);
+  }
+  return{identifiers:[...discovered.values()],ignored};
+}
+async function syncAssetsFromJira({restart=false}={}){
+  const previous=await kvs.get(SYNC_KEY);
+  let progress=await kvs.get(SYNC_PROGRESS_KEY);
+  if(!restart&&!progress&&previous?.complete)return previous;
+
+  const{field,issues,settings}=await searchIssuesWithConfiguredAssetField();
+  if(!field){
+    const result={timestamp:now(),field:null,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};
+    await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);return result;
+  }
+  const{identifiers,ignored}=discoveredIdentifiersFromIssues(issues,field.id);
+  if(restart||!progress||progress.fieldId!==field.id||progress.total!==identifiers.length){
+    const reconciled=await reconcileJiraAssets();
+    progress={fieldId:field.id,cursor:0,total:identifiers.length,created:0,matched:0,reconciled,startedAt:now()};
+    await kvs.set(SYNC_PROGRESS_KEY,progress);
+    await kvs.delete(SYNC_KEY);
+  }
+
+  const assets=await queryAllByPrefix(ASSET_PREFIX);
+  const byIdentifier=new Map(),byLegacyName=new Map();
+  for(const asset of assets){if(asset.jiraIdentifier)byIdentifier.set(normaliseName(asset.jiraIdentifier),asset);if(asset.name)byLegacyName.set(normaliseName(asset.name),asset);}
+  const start=progress.cursor;
+  const slice=identifiers.slice(start,start+SYNC_BATCH_SIZE);
+  let batchCreated=0,batchMatched=0;
+
+  for(const identifier of slice){
+    const normalized=normaliseName(identifier);
+    let asset=byIdentifier.get(normalized)||byLegacyName.get(normalized)||null;
+    const deterministicId=makeJiraAssetId(field.id,identifier);
+    if(!asset)asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);
+    const location=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraLocationField?.id);
+    const type=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraTypeField?.id);
+    const crewCode=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraCrewCodeField?.id);
+    const crewPerson=crewCode?mappedCrewPerson(settings,crewCode):null;
+    const holderName=crewCode?(crewPerson?.displayName||crewCode):'';
+    const holderAccountId=crewPerson?.accountId||'';
+    const base={jiraIdentifier:identifier,jiraIdentifierFieldId:field.id,jiraIdentifierFieldName:field.name};
+    if(asset){
+      asset=await saveOneAsset({...asset,...base,...(location?{location}:{}),...(type?{type}:{}),...(crewCode?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');
+      batchMatched+=1;
+    }else{
+      asset=await saveOneAsset({id:deterministicId,name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');
+      batchCreated+=1;
+    }
+    byIdentifier.set(normalized,asset);byLegacyName.set(normaliseName(asset.name),asset);
+  }
+
+  const processed=Math.min(start+slice.length,identifiers.length);
+  progress={...progress,cursor:processed,created:progress.created+batchCreated,matched:progress.matched+batchMatched};
+  const complete=processed>=identifiers.length;
+  const result={timestamp:now(),field,issuesScanned:issues.length,discovered:identifiers.length,processed,created:progress.created,matched:progress.matched,ignored,reconciled:progress.reconciled,complete};
+  if(complete){await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);}
+  else await kvs.set(SYNC_PROGRESS_KEY,progress);
+  return result;
+}
 async function searchAssetTickets(assetId,legacyKeys=[]){const asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);const matched=[];const targetIdentifier=asset?.jiraIdentifier||asset?.name||'';if(validIdentifier(targetIdentifier)){const{field,issues}=await searchIssuesWithConfiguredAssetField();if(field){for(const issue of issues)if(issueMatchesIdentifier(issue,field.id,targetIdentifier))matched.push(issue);}}if(legacyKeys.length){const existing=new Set(matched.map(i=>i.key));const missingKeys=legacyKeys.filter(k=>!existing.has(k));if(missingKeys.length){const response=await api.asUser().requestJira(route`/rest/api/3/search/jql`,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({jql:`key in (${missingKeys.join(',')}) ORDER BY created DESC`,fields:['summary','status','issuetype','priority','assignee','created','resolutiondate','resolution'],maxResults:100})});if(response.ok){const data=await response.json();matched.push(...safeArray(data.issues));}}}return matched.map(ticketFields).sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));}
-resolver.define('listAssets',async({payload})=>{try{await syncAssetsFromJira(false);}catch{}const query=String(payload?.query||'').toLowerCase(),status=clean(payload?.status||''),type=clean(payload?.type||''),location=clean(payload?.location||'');let assets=await queryAllByPrefix(ASSET_PREFIX);if(query)assets=assets.filter(a=>[a.id,a.name,a.jiraIdentifier,a.crewCode,a.type,a.manufacturer,a.model,a.serialNumber,a.assigneeName,a.status,a.location].some(v=>String(v||'').toLowerCase().includes(query)));if(status)assets=assets.filter(a=>a.status===status);if(type)assets=assets.filter(a=>a.type===type);if(location)assets=assets.filter(a=>a.location===location);return assets.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));});
-resolver.define('syncAssetsFromJira',async()=>syncAssetsFromJira(true));resolver.define('getJiraCustomFields',async()=>getJiraCustomFields());
+resolver.define('listAssets',async({payload})=>{const query=String(payload?.query||'').toLowerCase(),status=clean(payload?.status||''),type=clean(payload?.type||''),location=clean(payload?.location||'');let assets=await queryAllByPrefix(ASSET_PREFIX);if(query)assets=assets.filter(a=>[a.id,a.name,a.jiraIdentifier,a.crewCode,a.type,a.manufacturer,a.model,a.serialNumber,a.assigneeName,a.status,a.location].some(v=>String(v||'').toLowerCase().includes(query)));if(status)assets=assets.filter(a=>a.status===status);if(type)assets=assets.filter(a=>a.type===type);if(location)assets=assets.filter(a=>a.location===location);return assets.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));});
+resolver.define('syncAssetsFromJira',async({payload})=>syncAssetsFromJira({restart:Boolean(payload?.restart)}));
+resolver.define('getSyncStatus',async()=>await kvs.get(SYNC_PROGRESS_KEY)||await kvs.get(SYNC_KEY)||null);
+resolver.define('getJiraCustomFields',async()=>getJiraCustomFields());
 resolver.define('searchDevices',async({payload})=>{const query=normaliseName(payload?.query||'');const assets=await queryAllByPrefix(ASSET_PREFIX);return assets.filter(a=>!query||normaliseName(a.name).includes(query)||normaliseName(a.jiraIdentifier).includes(query)).sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'})).slice(0,50).map(a=>({id:a.id,name:a.name}));});
 resolver.define('getAssetByName',async({payload})=>{const name=clean(payload?.name||'');if(!name)return null;const indexed=await kvs.get(nameIndexKey(name));if(indexed?.assetId)return kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);const assets=await queryAllByPrefix(ASSET_PREFIX);return assets.find(a=>normaliseName(a.name)===normaliseName(name))||null;});
 resolver.define('getAsset',async({payload})=>payload?.id?kvs.get(`${ASSET_PREFIX}${payload.id}`):null);resolver.define('saveAsset',async({payload})=>saveOneAsset(payload?.asset||{},'manual'));
 resolver.define('bulkImportAssets',async({payload})=>{const rows=safeArray(payload?.assets);if(!rows.length)return{imported:0,failed:[]};const failed=[];let imported=0;for(let i=0;i<rows.length;i+=1){try{await saveOneAsset(rows[i],'bulk-import');imported+=1;}catch(error){failed.push({row:i+2,deviceName:clean(rows[i]?.name||''),message:error?.message||'Import failed'});}}return{imported,failed};});
 resolver.define('deleteAsset',async({payload})=>{if(!payload?.id)throw new Error('Asset id is required.');const asset=await kvs.get(`${ASSET_PREFIX}${payload.id}`);if(!asset)return{ok:true};const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===payload.id).map(l=>l.issueKey).filter(Boolean);let linkedTickets;try{linkedTickets=await searchAssetTickets(payload.id,legacyKeys);}catch{throw new Error('Could not verify whether this device is linked to Jira tickets. Please try again before deleting it.');}if(linkedTickets.length)throw new Error(`This device is linked to ${linkedTickets.length} Jira ticket${linkedTickets.length===1?'':'s'}. Clear the configured Jira asset field or unlink those tickets before deleting the device.`);await kvs.delete(`${ASSET_PREFIX}${payload.id}`);if(asset.name)await kvs.delete(nameIndexKey(asset.name));await addHistory(payload.id,{type:'deleted',source:'manual',message:'Asset deleted',deviceName:asset.name});return{ok:true};});
 resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
-resolver.define('getSettings',async()=>getSettingsValue());resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};const normaliseField=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;const settings={assetTypes:safeArray(incoming.assetTypes).map(clean).filter(Boolean),statuses:safeArray(incoming.statuses).map(clean).filter(Boolean),locations:safeArray(incoming.locations).map(clean).filter(Boolean),customFields:safeArray(incoming.customFields).map(f=>({key:clean(f.key),label:clean(f.label),type:clean(f.type||'text')})).filter(f=>f.key&&f.label),jiraAssetField:normaliseField(incoming.jiraAssetField),jiraLocationField:normaliseField(incoming.jiraLocationField),jiraTypeField:normaliseField(incoming.jiraTypeField),jiraCrewCodeField:normaliseField(incoming.jiraCrewCodeField),crewMappings:safeArray(incoming.crewMappings).map(m=>({crewCode:clean(m.crewCode),accountId:clean(m.accountId),displayName:clean(m.displayName)})).filter(m=>m.crewCode&&(m.displayName||m.accountId))};if(!settings.assetTypes.length)settings.assetTypes=DEFAULT_SETTINGS.assetTypes;if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;await kvs.set(SETTINGS_KEY,settings);await kvs.delete(SYNC_KEY);return settings;});
+resolver.define('getSettings',async()=>getSettingsValue());resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};const normaliseField=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;const settings={assetTypes:safeArray(incoming.assetTypes).map(clean).filter(Boolean),statuses:safeArray(incoming.statuses).map(clean).filter(Boolean),locations:safeArray(incoming.locations).map(clean).filter(Boolean),customFields:safeArray(incoming.customFields).map(f=>({key:clean(f.key),label:clean(f.label),type:clean(f.type||'text')})).filter(f=>f.key&&f.label),jiraAssetField:normaliseField(incoming.jiraAssetField),jiraLocationField:normaliseField(incoming.jiraLocationField),jiraTypeField:normaliseField(incoming.jiraTypeField),jiraCrewCodeField:normaliseField(incoming.jiraCrewCodeField),crewMappings:safeArray(incoming.crewMappings).map(m=>({crewCode:clean(m.crewCode),accountId:clean(m.accountId),displayName:clean(m.displayName)})).filter(m=>m.crewCode&&(m.displayName||m.accountId))};if(!settings.assetTypes.length)settings.assetTypes=DEFAULT_SETTINGS.assetTypes;if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;await kvs.set(SETTINGS_KEY,settings);await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);return settings;});
 resolver.define('searchUsers',async({payload})=>{const q=clean(payload?.query||'');if(!q||q.length<2)return[];const response=await api.asUser().requestJira(route`/rest/api/3/user/search?query=${q}&maxResults=20`,{headers:{Accept:'application/json'}});if(!response.ok)return[];const users=await response.json();return users.filter(u=>u.active!==false&&u.accountType!=='app').map(u=>({accountId:u.accountId,displayName:u.displayName,avatarUrl:u.avatarUrls?.['24x24']||''}));});
 resolver.define('getIssueContext',async({context})=>{const issueKey=context?.extension?.issue?.key;if(!issueKey)return{issueKey:null,linkedAsset:null};const link=await kvs.get(`${LINK_PREFIX}${issueKey}`);const linkedAsset=link?.assetId?await kvs.get(`${ASSET_PREFIX}${link.assetId}`):null;return{issueKey,linkedAsset};});
 resolver.define('linkAssetToIssue',async({payload,context})=>{const issueKey=payload?.issueKey||context?.extension?.issue?.key,assetId=payload?.assetId;if(!issueKey||!assetId)throw new Error('Issue and asset are required.');const asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);if(!asset)throw new Error('Asset not found.');await kvs.set(`${LINK_PREFIX}${issueKey}`,{issueKey,assetId,deviceName:asset.name,linkedAt:now()});await addHistory(assetId,{type:'ticket-linked',source:'jira',message:`${issueKey} linked to asset`,issueKey});return{issueKey,asset};});
 resolver.define('unlinkAssetFromIssue',async({payload,context})=>{const issueKey=payload?.issueKey||context?.extension?.issue?.key;if(!issueKey)throw new Error('Issue is required.');const link=await kvs.get(`${LINK_PREFIX}${issueKey}`);await kvs.delete(`${LINK_PREFIX}${issueKey}`);if(link?.assetId)await addHistory(link.assetId,{type:'ticket-unlinked',source:'jira',message:`${issueKey} unlinked from asset`,issueKey});return{ok:true};});
 resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId).map(l=>l.issueKey).filter(Boolean);try{return await searchAssetTickets(assetId,legacyKeys);}catch{return legacyKeys.map(key=>({key}));}});
-resolver.define('getAssetReport',async()=>{const assets=await queryAllByPrefix(ASSET_PREFIX),links=await queryAllByPrefix(LINK_PREFIX),rows=[];for(let start=0;start<assets.length;start+=5){const batch=assets.slice(start,start+5);rows.push(...await Promise.all(batch.map(async asset=>{const legacyKeys=links.filter(l=>l?.assetId===asset.id).map(l=>l.issueKey).filter(Boolean);try{const tickets=await searchAssetTickets(asset.id,legacyKeys);const open=tickets.filter(t=>!t.resolved&&t.statusCategory!=='done').length;return{assetId:asset.id,name:asset.name,type:asset.type,status:asset.status,assigneeName:asset.assigneeName||asset.crewCode||'',total:tickets.length,open,resolved:tickets.length-open,lastFault:tickets.find(t=>t.created)?.created||'',latestFault:tickets[0]||null,error:false};}catch{return{assetId:asset.id,name:asset.name,type:asset.type,status:asset.status,assigneeName:asset.assigneeName||asset.crewCode||'',total:null,open:null,resolved:null,lastFault:'',latestFault:null,error:true};}})));}return rows.sort((a,b)=>(b.total??-1)-(a.total??-1)||String(b.lastFault||'').localeCompare(String(a.lastFault||''))||String(a.name).localeCompare(String(b.name)));});
+resolver.define('getAssetReport',async()=>{
+  const assets=await queryAllByPrefix(ASSET_PREFIX);
+  if(!assets.length)return[];
+  const rows=[];
+  let field=null,issues=[];
+  try{const found=await searchIssuesWithConfiguredAssetField();field=found.field;issues=found.issues;}catch{}
+  const ticketsByIdentifier=new Map();
+  if(field){
+    for(const issue of issues){
+      const ticket=ticketFields(issue);
+      for(const identifier of fieldValues(issue.fields?.[field.id])){
+        if(!validIdentifier(identifier))continue;
+        const key=normaliseName(identifier);
+        if(!ticketsByIdentifier.has(key))ticketsByIdentifier.set(key,[]);
+        ticketsByIdentifier.get(key).push(ticket);
+      }
+    }
+  }
+  for(const asset of assets){
+    const key=normaliseName(asset.jiraIdentifier||asset.name);
+    const tickets=ticketsByIdentifier.get(key)||[];
+    const open=tickets.filter(t=>!t.resolved&&t.statusCategory!=='done').length;
+    rows.push({assetId:asset.id,name:asset.name,type:asset.type,status:asset.status,assigneeName:asset.assigneeName||asset.crewCode||'',total:tickets.length,open,resolved:tickets.length-open,lastFault:tickets.find(t=>t.created)?.created||'',latestFault:tickets[0]||null,error:false});
+  }
+  return rows.sort((a,b)=>(b.total??-1)-(a.total??-1)||String(b.lastFault||'').localeCompare(String(a.lastFault||''))||String(a.name).localeCompare(String(b.name)));
+});
 export const handler = resolver.getDefinitions();
