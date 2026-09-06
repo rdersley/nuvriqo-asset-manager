@@ -90,9 +90,29 @@ test('Jira-discovered assets have deterministic ids and reconcile old duplicates
   assert.match(backend, /reconciled/);
 });
 
-test('reporting does not start a second competing Jira sync', () => {
+test('large Jira discovery is resumable and bounded per Forge invocation', () => {
+  assert.match(backend, /SYNC_PROGRESS_KEY/);
+  assert.match(backend, /SYNC_BATCH_SIZE\s*=\s*20/);
+  assert.match(backend, /identifiers\.slice\(start,start\+SYNC_BATCH_SIZE\)/);
+  assert.match(backend, /processed>=identifiers\.length/);
+  assert.match(backend, /complete/);
+  assert.match(frontend, /while\(sync&&!sync\.complete&&guard<50\)/);
+  assert.match(frontend, /Syncing Jira devices…/);
+  assert.match(frontend, /sync\.processed/);
+  assert.match(frontend, /sync\.discovered/);
+});
+
+test('Jira sync does not run the expensive manual uniqueness scan for each discovered device', () => {
+  assert.match(backend, /source !== 'jira-sync'/);
+  assert.match(backend, /assertUniqueDeviceName/);
+});
+
+test('reporting groups one Jira result set by device identifier', () => {
+  assert.match(backend, /ticketsByIdentifier/);
+  assert.match(backend, /ticketsByIdentifier\.get\(key\)/);
+  assert.match(backend, /const found=await searchIssuesWithConfiguredAssetField\(\)/);
   const reportResolver = backend.slice(backend.indexOf("resolver.define('getAssetReport'"));
-  assert.doesNotMatch(reportResolver.split('export const handler')[0], /syncAssetsFromJira\(false\)/);
+  assert.doesNotMatch(reportResolver.split('export const handler')[0], /searchAssetTickets\(/);
 });
 
 test('asset search can find the configured Jira identifier', () => {
@@ -109,7 +129,7 @@ test('Jira metadata mappings use the latest populated value for each mapped fiel
   assert.match(backend, /if\(value\)return value/);
 });
 
-test('crew code ownership works without a Jira account', () => {
+test('assignment reference ownership works without a Jira account', () => {
   assert.match(backend, /mappedCrewPerson/);
   assert.match(backend, /crewPerson\?\.displayName\|\|crewCode/);
   assert.match(backend, /holderAccountId=crewPerson\?\.accountId\|\|''/);
@@ -117,7 +137,7 @@ test('crew code ownership works without a Jira account', () => {
 });
 
 test('manual holder entry stays free text while optional Jira identity lookup remains available', () => {
-  assert.match(frontend, /Enter person, crew code, or search Jira/);
+  assert.match(frontend, /Enter person, assignment reference, or search Jira/);
   assert.match(frontend, /assigneeAccountId:\s*''\s*,\s*assigneeName:\s*value/);
   assert.match(frontend, /asset\.assigneeAccountId\s*&&\s*query\s*===\s*asset\.assigneeName/);
   assert.match(frontend, /invoke\('searchUsers',\s*\{\s*query\s*\}\)/);
@@ -128,14 +148,16 @@ test('placeholder identifiers are rejected for discovery and fault matching', ()
   assert.match(backend, /validIdentifier/);
   assert.match(backend, /\['\.', '-', 'n\/a', 'na', 'none', 'null', 'unknown'\]/);
   assert.match(backend, /autoDiscovered&&!validIdentifier\(identifier\)/);
-  assert.match(backend, /if\(validIdentifier\(targetIdentifier\)\)/);
   assert.match(backend, /issueMatchesIdentifier\(issue,field\.id,targetIdentifier\)/);
 });
 
-test('configuration UI exposes field mappings and crew ownership controls', () => {
+test('configuration UI exposes generic assignment-reference mapping and save feedback', () => {
   assert.match(frontend, /Jira location \/ base field/);
   assert.match(frontend, /Jira device type field/);
-  assert.match(frontend, /Jira crew code field/);
+  assert.match(frontend, /Jira assignment reference field/);
+  assert.match(frontend, /Assignment reference → holder mappings/);
+  assert.match(frontend, /Saving…/);
+  assert.match(frontend, /saveStage/);
 });
 
 test('asset register exposes the latest fault per device', () => {
