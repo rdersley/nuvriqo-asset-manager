@@ -47,3 +47,38 @@ test('maps configured custom field labels back into customFields during CSV impo
   assert.equal(rows[0].customFields.replacementDate, '2027-01-15');
   assert.equal(rows[0].customFields.assetOwner, 'IT Team');
 });
+
+test('round-trips exported Device ID, Crew Code and holder headers', async () => {
+  const file = {
+    name: 'assets.csv',
+    text: async () => 'Device Name,Device ID,Crew Code,Assigned Person / Holder,Location\nFriendly Tablet,RYR123,ABC456,Jane Smith,DUB\n'
+  };
+  const [row] = await readAssetImportFile(file);
+  assert.equal(row.name, 'Friendly Tablet');
+  assert.equal(row.jiraIdentifier, 'RYR123');
+  assert.equal(row.crewCode, 'ABC456');
+  assert.equal(row.assigneeName, 'Jane Smith');
+  assert.equal(row.location, 'DUB');
+});
+
+test('supports legacy holder aliases and Base imports', async () => {
+  const file = {
+    name: 'legacy.csv',
+    text: async () => 'Device Name,Assigned User,Base,Crew Code\nTablet 9,External Person,SNN,CREW9\n'
+  };
+  const [row] = await readAssetImportFile(file);
+  assert.equal(row.assigneeName, 'External Person');
+  assert.equal(row.location, 'SNN');
+  assert.equal(row.crewCode, 'CREW9');
+  assert.equal(row.assigneeAccountId, undefined);
+});
+
+test('keeps Jira account identity optional when explicitly supplied', async () => {
+  const file = {
+    name: 'identity.csv',
+    text: async () => 'Device Name,Holder,Jira Account ID\nTablet 10,Portal Customer,712020:abcd\n'
+  };
+  const [row] = await readAssetImportFile(file);
+  assert.equal(row.assigneeName, 'Portal Customer');
+  assert.equal(row.assigneeAccountId, '712020:abcd');
+});
