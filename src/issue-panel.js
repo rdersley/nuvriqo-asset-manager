@@ -60,8 +60,9 @@ function firstValue(value) {
 
 async function getIssue(issueKey, fieldIds = []) {
   const fields = [...new Set(fieldIds.filter(Boolean))].join(',');
-  const suffix = fields ? `?fields=${encodeURIComponent(fields)}` : '';
-  const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}${suffix}`, { headers: { Accept: 'application/json' } });
+  const response = fields
+    ? await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?fields=${fields}`, { headers: { Accept: 'application/json' } })
+    : await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, { headers: { Accept: 'application/json' } });
   if (!response.ok) throw new Error(`Could not load Jira issue (${response.status}).`);
   return response.json();
 }
