@@ -46,6 +46,17 @@ modules:
           - issue-create
           - issue-transition
 
+  jiraServiceManagement:portalUserMenuAction:
+    - key: nuvriqo-my-organisation-devices
+      resource: portal-assets
+      resolver:
+        function: portal-assets
+      title: My organisation's devices
+      viewportSize: large
+      unlicensedAccess:
+        - customer
+        - unlicensed
+
   function:
     - key: resolver
       handler: index.handler
@@ -53,6 +64,8 @@ modules:
       handler: ticket-sync.handler
     - key: issue-panel
       handler: issue-panel.handler
+    - key: portal-assets
+      handler: portal-assets.handler
 
 resources:
   - key: main
@@ -61,6 +74,8 @@ resources:
     path: panel-static/dist
   - key: device-field
     path: field-static/dist
+  - key: portal-assets
+    path: portal-static/dist
 
 permissions:
   scopes:
@@ -72,6 +87,7 @@ permissions:
     - read:avatar:jira
     - read:application-role:jira
     - read:group:jira
+    - read:organization:jira-service-management
 
 app:
   runtime:
