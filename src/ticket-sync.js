@@ -23,9 +23,7 @@ async function allAssets() {
   return values;
 }
 
-async function settings() {
-  return (await kvs.get(SETTINGS_KEY)) || {};
-}
+async function settings() { return (await kvs.get(SETTINGS_KEY)) || {}; }
 
 async function fieldDefinitions() {
   const response = await api.asUser().requestJira(route`/rest/api/3/field`, { headers: { Accept: 'application/json' } });
@@ -50,13 +48,14 @@ async function updateIssue(issueKey, asset, choices = {}) {
   const byId = new Map(defs.map((field) => [field.id, field]));
   const fields = {};
   const updated = [];
-
-  // Device type is authoritative device metadata and is safe to populate automatically.
+  if (cfg.jiraAssetField?.id && clean(asset.jiraIdentifier || asset.name)) {
+    fields[cfg.jiraAssetField.id] = jiraValue(byId.get(cfg.jiraAssetField.id), asset.jiraIdentifier || asset.name);
+    updated.push(cfg.jiraAssetField.name || 'Device ID');
+  }
   if (choices.deviceType !== false && cfg.jiraTypeField?.id && clean(asset.type)) {
     fields[cfg.jiraTypeField.id] = jiraValue(byId.get(cfg.jiraTypeField.id), asset.type);
     updated.push(cfg.jiraTypeField.name || 'Device type');
   }
-  // Location/base and assignment reference can legitimately change, so they are opt-in only.
   if (choices.location === true && cfg.jiraLocationField?.id && clean(asset.location)) {
     fields[cfg.jiraLocationField.id] = jiraValue(byId.get(cfg.jiraLocationField.id), asset.location);
     updated.push(cfg.jiraLocationField.name || 'Base / location');
@@ -65,54 +64,34 @@ async function updateIssue(issueKey, asset, choices = {}) {
     fields[cfg.jiraCrewCodeField.id] = jiraValue(byId.get(cfg.jiraCrewCodeField.id), asset.crewCode);
     updated.push(cfg.jiraCrewCodeField.name || 'Assignment reference');
   }
-
   if (!Object.keys(fields).length) return { updated: [], skipped: true, reason: 'No mapped asset fields were selected.' };
-  const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, {
-    method: 'PUT',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fields })
-  });
-  if (!response.ok) {
-    let detail = '';
-    try { detail = JSON.stringify(await response.json()); } catch {}
-    throw new Error(`Could not update Jira ticket fields (${response.status}).${detail ? ` ${detail.slice(0, 300)}` : ''}`);
-  }
-  await kvs.set(`${HISTORY_PREFIX}${asset.id}:${now()}:ticket-sync`, {
-    assetId: asset.id,
-    timestamp: now(),
-    type: 'ticket-field-sync',
-    source: 'jira',
-    issueKey,
-    message: `${issueKey} updated from Asset Manager`,
-    fields: updated
-  });
-  return { updated, skipped: false };
+  const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
+  if (!response.ok) { let detail=''; try{detail=JSON.stringify(await response.json());}catch{} throw new Error(`Could not update Jira ticket fields (${response.status}).${detail ? ` ${detail.slice(0,300)}` : ''}`); }
+  await kvs.set(`${HISTORY_PREFIX}${asset.id}:${now()}:ticket-sync`, { assetId:asset.id,timestamp:now(),type:'ticket-field-sync',source:'jira',issueKey,message:`${issueKey} updated from Asset Manager`,fields:updated });
+  return { updated, skipped:false };
 }
 
 resolver.define('searchDevices', async ({ payload }) => {
   const query = normalise(payload?.query || '');
   const assets = await allAssets();
   return assets
-    .filter((asset) => !query || normalise(asset.name).includes(query) || normalise(asset.jiraIdentifier).includes(query))
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }))
-    .slice(0, 50)
-    .map((asset) => ({
-      id: asset.id,
-      name: asset.name,
-      type: asset.type || '',
-      location: asset.location || '',
-      assignmentReference: asset.crewCode || '',
-      holder: asset.assigneeName || asset.crewCode || ''
-    }));
+    .filter((asset) => {
+      if (!query) return true;
+      return [asset.name, asset.jiraIdentifier, asset.type, asset.manufacturer, asset.model, asset.location, asset.assigneeName, asset.crewCode, asset.serialNumber]
+        .some((value) => normalise(value).includes(query));
+    })
+    .sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'}))
+    .slice(0,50)
+    .map((asset)=>({ id:asset.id,name:asset.name,identifier:asset.jiraIdentifier||asset.name,type:asset.type||'',manufacturer:asset.manufacturer||'',model:asset.model||'',location:asset.location||'',assignmentReference:asset.crewCode||'',holder:asset.assigneeName||asset.crewCode||'',status:asset.status||'',serialNumber:asset.serialNumber||'' }));
 });
 
 resolver.define('applyAssetToIssue', async ({ payload, context }) => {
-  const assetId = clean(payload?.assetId || '');
-  if (!assetId) throw new Error('Asset is required.');
-  const asset = await kvs.get(`${ASSET_PREFIX}${assetId}`);
-  if (!asset) throw new Error('Asset not found.');
-  const issueKey = clean(payload?.issueKey || context?.extension?.issue?.key || '');
-  return updateIssue(issueKey, asset, payload?.choices || {});
+  const assetId=clean(payload?.assetId||'');
+  if(!assetId) throw new Error('Asset is required.');
+  const asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);
+  if(!asset) throw new Error('Asset not found.');
+  const issueKey=clean(payload?.issueKey||context?.extension?.issue?.key||'');
+  return updateIssue(issueKey,asset,payload?.choices||{});
 });
 
 export const handler = resolver.getDefinitions();
