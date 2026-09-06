@@ -21,7 +21,7 @@ modules:
       description: Select a device from Nuvriqo Asset Manager.
       type: object
       resolver:
-        function: resolver
+        function: ticket-sync
       schema:
         type: object
         properties:
@@ -49,6 +49,8 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+    - key: ticket-sync
+      handler: ticket-sync.handler
 
 resources:
   - key: main
@@ -62,6 +64,7 @@ permissions:
   scopes:
     - storage:app
     - read:jira-work
+    - write:jira-work
     - read:jira-user
     - read:user:jira
     - read:avatar:jira
