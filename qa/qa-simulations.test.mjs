@@ -80,6 +80,21 @@ test('new Jira-discovered assets keep identifier and device name separately', ()
   assert.match(backend, /jiraIdentifierFieldName:field\.name/);
 });
 
+test('Jira-discovered assets have deterministic ids and reconcile old duplicates', () => {
+  assert.match(backend, /makeJiraAssetId/);
+  assert.match(backend, /createHash\('sha256'\)/);
+  assert.match(backend, /id:deterministicId/);
+  assert.match(backend, /reconcileJiraAssets/);
+  assert.match(backend, /group\.length<2/);
+  assert.match(backend, /kvs\.delete\(`\$\{ASSET_PREFIX\}\$\{duplicate\.id\}`\)/);
+  assert.match(backend, /reconciled/);
+});
+
+test('reporting does not start a second competing Jira sync', () => {
+  const reportResolver = backend.slice(backend.indexOf("resolver.define('getAssetReport'"));
+  assert.doesNotMatch(reportResolver.split('export const handler')[0], /syncAssetsFromJira\(false\)/);
+});
+
 test('asset search can find the configured Jira identifier', () => {
   assert.match(backend, /jiraIdentifier/);
   assert.ok(/normaliseName\(a\.jiraIdentifier\)\.includes\(query\)/.test(backend) || /\[a\.id,a\.name,a\.jiraIdentifier/.test(backend));
@@ -112,6 +127,7 @@ test('manual holder entry stays free text while optional Jira identity lookup re
 test('placeholder identifiers are rejected for discovery and fault matching', () => {
   assert.match(backend, /validIdentifier/);
   assert.match(backend, /\['\.', '-', 'n\/a', 'na', 'none', 'null', 'unknown'\]/);
+  assert.match(backend, /autoDiscovered&&!validIdentifier\(identifier\)/);
   assert.match(backend, /if\(validIdentifier\(targetIdentifier\)\)/);
   assert.match(backend, /issueMatchesIdentifier\(issue,field\.id,targetIdentifier\)/);
 });
