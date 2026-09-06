@@ -135,7 +135,7 @@ jobs:
         run: forge settings set usage-analytics false
 
       - name: Deploy to Forge development
-        run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
+        run: forge deploy --environment "$FORGE_ENVIRONMENT" --approve MAJOR_VERSION_RULE --non-interactive
 
       - name: Install or upgrade on Retail in Motion sandbox
         shell: bash
