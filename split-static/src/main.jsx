@@ -39,7 +39,7 @@ function App() {
   }
 
   async function createSubtasks() {
-    if (!activeItems.length) return;
+    if (!activeItems.length || !data?.canCreateSubtasks) return;
     setBusy(true);
     setError('');
     setResult(null);
@@ -84,16 +84,18 @@ function App() {
                   {item.alreadySplit && <span className="badge neutral">Already split · {item.childKey}</span>}
                 </div>
                 <div className="fault">{item.fault || 'No individual fault text detected — see parent request.'}</div>
+                <small>Detected from {item.source || 'ticket text'}</small>
                 {item.recognised && item.assetName !== item.identifier && <small>{item.assetName}</small>}
               </div>
             </label>
           ))}
         </section>
       ) : (
-        <div className="empty">No device identifiers were detected in the ticket description. Add or correct the device IDs, then reopen this action.</div>
+        <div className="empty">No device identifiers were detected in the ticket summary or description. Add or correct the device IDs, then reopen this action.</div>
       )}
 
       {data?.subtaskType && <div className="note">Sub-task type: <strong>{data.subtaskType.name}</strong>. Priority is copied from the parent ticket. Recognised assets are linked to the new child ticket when the mapped device field allows it.</div>}
+      {data?.subtaskWarning && <div className="error">{data.subtaskWarning}</div>}
 
       {result && (
         <div className="result-box">
@@ -107,7 +109,7 @@ function App() {
 
       <footer>
         <button className="secondary" disabled={busy} onClick={() => view.close()}>Close</button>
-        <button disabled={busy || activeItems.length === 0} onClick={createSubtasks}>
+        <button disabled={busy || activeItems.length === 0 || !data?.canCreateSubtasks} onClick={createSubtasks}>
           {busy ? 'Creating…' : `Create ${activeItems.length || 0} sub-task${activeItems.length === 1 ? '' : 's'}`}
         </button>
       </footer>

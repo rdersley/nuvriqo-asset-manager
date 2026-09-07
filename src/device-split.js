@@ -51,6 +51,12 @@ function assetIdentifiers(asset) {
   return [...new Set([asset?.jiraIdentifier, asset?.name, asset?.serialNumber].map(clean).filter(Boolean))];
 }
 
+function isFallbackIdentifier(token) {
+  const value = clean(token);
+  if (!value) return false;
+  return /\d/.test(value) && /[_-]/.test(value);
+}
+
 function detectDevices(text, assets, source = 'description') {
   const rows = String(text || '').split(/\r?\n/).map(stripLead).filter(Boolean);
   const found = [];
@@ -78,6 +84,7 @@ function detectDevices(text, assets, source = 'description') {
 
     const tokenMatches = line.match(/\b[A-Z0-9]{2,}(?:[_-][A-Z0-9]{2,}){1,}\b/gi) || [];
     for (const token of tokenMatches) {
+      if (!isFallbackIdentifier(token)) continue;
       const key = normalise(token);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -112,8 +119,9 @@ function mergeDetected(...groups) {
   return [...merged.values()];
 }
 
-async function loadIssue(issueKey) {
-  const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?fields=summary,description,project,priority,issuetype,subtasks`, {
+async function loadIssue(issueKey, fieldIds = ['summary', 'description', 'project', 'priority', 'issuetype', 'subtasks']) {
+  const fields = [...new Set(fieldIds.filter(Boolean))].join(',');
+  const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?fields=${fields}`, {
     headers: { Accept: 'application/json' }
   });
   if (!response.ok) throw new Error(`Could not load Jira issue (${response.status}).`);
@@ -121,14 +129,78 @@ async function loadIssue(issueKey) {
 }
 
 async function subtaskIssueType(projectId) {
-  const response = await api.asUser().requestJira(route`/rest/api/3/issuetype/project?projectId=${projectId}&level=-1`, {
-    headers: { Accept: 'application/json' }
-  });
-  if (!response.ok) throw new Error(`Could not load sub-task issue types (${response.status}).`);
-  const types = await response.json();
-  const type = Array.isArray(types) ? types.find((item) => item.subtask || Number(item.hierarchyLevel) === -1) : null;
-  if (!type?.id) throw new Error('This Jira project does not have a sub-task issue type configured.');
-  return type;
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/issuetype/project?projectId=${projectId}&level=-1`, {
+      headers: { Accept: 'application/json' }
+    });
+    if (response.ok) {
+      const types = await response.json();
+      const type = Array.isArray(types) ? types.find((item) => item.subtask || Number(item.hierarchyLevel) === -1) : null;
+      if (type?.id) return type;
+    }
+  } catch {}
+
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/project/${projectId}/hierarchy`, {
+      headers: { Accept: 'application/json' }
+    });
+    if (response.ok) {
+      const data = await response.json();
+      const level = Array.isArray(data?.hierarchy) ? data.hierarchy.find((entry) => Number(entry.level) === -1) : null;
+      const type = Array.isArray(level?.issueTypes) ? level.issueTypes[0] : null;
+      if (type?.id) return { ...type, subtask: true, hierarchyLevel: -1 };
+    }
+  } catch {}
+
+  return null;
+}
+
+async function createFieldMetadata(projectId, issueTypeId) {
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/issue/createmeta/${projectId}/issuetypes/${issueTypeId}?maxResults=200`, {
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (Array.isArray(data?.fields)) return data.fields;
+    if (data?.fields && typeof data.fields === 'object') {
+      return Object.entries(data.fields).map(([fieldId, field]) => ({ fieldId, ...field }));
+    }
+  } catch {}
+  return [];
+}
+
+function fieldIdOf(field) {
+  return clean(field?.fieldId || field?.key || field?.id);
+}
+
+function hasValue(value) {
+  if (value == null) return false;
+  if (typeof value === 'string') return Boolean(value.trim());
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+async function inheritedCreateFields(issueKey, projectId, issueTypeId) {
+  const metadata = await createFieldMetadata(projectId, issueTypeId);
+  if (!metadata.length) return { fields: {}, missingRequired: [] };
+
+  const reserved = new Set(['summary', 'description', 'project', 'issuetype', 'parent', 'subtasks', 'status', 'resolution', 'created', 'updated']);
+  const candidates = metadata
+    .map((field) => ({ ...field, fieldId: fieldIdOf(field) }))
+    .filter((field) => field.fieldId && !reserved.has(field.fieldId));
+
+  const parent = candidates.length ? await loadIssue(issueKey, candidates.map((field) => field.fieldId)) : { fields: {} };
+  const inherited = {};
+  const missingRequired = [];
+
+  for (const field of candidates) {
+    const value = parent.fields?.[field.fieldId];
+    if (hasValue(value)) inherited[field.fieldId] = value;
+    else if (field.required) missingRequired.push(field.name || field.fieldId);
+  }
+
+  return { fields: inherited, missingRequired };
 }
 
 async function addHistory(assetId, event) {
@@ -169,11 +241,14 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
   );
   const items = await splitState(issueKey, detected);
   const type = issue.fields?.project?.id ? await subtaskIssueType(issue.fields.project.id) : null;
+
   return {
     issueKey,
     summary: issue.fields?.summary || issueKey,
     projectId: issue.fields?.project?.id || '',
-    subtaskType: type ? { id: type.id, name: type.name } : null,
+    subtaskType: type ? { id: String(type.id), name: type.name || 'Sub-task' } : null,
+    canCreateSubtasks: Boolean(type?.id),
+    subtaskWarning: type?.id ? '' : 'No Jira sub-task issue type is currently available for this project. The devices can be reviewed, but Jira must have a sub-task issue type enabled before they can be created.',
     items,
     textFound: Boolean(summaryText || descriptionText),
     scannedSources: ['summary', 'description']
@@ -190,6 +265,15 @@ resolver.define('createDeviceSubtasks', async ({ payload, context }) => {
   const projectId = issue.fields?.project?.id;
   if (!projectId) throw new Error('Could not determine the Jira project.');
   const type = await subtaskIssueType(projectId);
+  if (!type?.id) {
+    throw new Error('The devices were detected, but this Jira project does not currently expose a sub-task issue type. Enable/add a sub-task issue type to the project, then reopen Split Devices.');
+  }
+
+  const inherited = await inheritedCreateFields(issueKey, projectId, String(type.id));
+  if (inherited.missingRequired.length) {
+    throw new Error(`Jira requires ${inherited.missingRequired.join(', ')} on new sub-tasks, but the parent ticket has no value to copy. Add the required value(s) to ${issueKey}, then retry.`);
+  }
+
   const cfg = (await kvs.get(SETTINGS_KEY)) || {};
   const assetFieldId = cfg.jiraAssetField?.id || '';
   const assets = await queryAllByPrefix(ASSET_PREFIX);
@@ -209,8 +293,9 @@ resolver.define('createDeviceSubtasks', async ({ payload, context }) => {
 
     const fault = clean(raw?.fault);
     const fields = {
+      ...inherited.fields,
       project: { id: projectId },
-      issuetype: { id: type.id },
+      issuetype: { id: String(type.id) },
       parent: { key: issueKey },
       summary: `${identifier} - ${fault || 'Device issue'}`.slice(0, 255),
       description: childDescription(issueKey, identifier, fault)
