@@ -79,7 +79,7 @@ test('issue panel manages one primary asset and multiple related assets', () => 
   assert.match(panelFrontend,/Use <strong>Primary<\/strong>/);
 });
 
-test('ticket autofill makes device type automatic but base and owner explicit opt-ins', () => {
+test('ticket autofill makes device type automatic but location and owner explicit opt-ins', () => {
   assert.match(ticketSync,/choices\.deviceType !== false/);
   assert.match(ticketSync,/choices\.location === true/);
   assert.match(ticketSync,/choices\.owner === true/);
@@ -89,16 +89,16 @@ test('ticket autofill makes device type automatic but base and owner explicit op
   assert.match(ticketSync,/method: 'PUT'/);
   assert.match(deviceField,/deviceType:true,location:applyLocation,owner:applyOwner/);
   assert.match(deviceField,/fills Device Type automatically/);
-  assert.match(deviceField,/Also apply base \/ location/);
+  assert.match(deviceField,/Also apply location/);
   assert.match(deviceField,/Also apply holder \/ assignment reference/);
-  assert.match(deviceField,/Base and holder remain opt-in/);
+  assert.match(deviceField,/Location and holder remain opt-in/);
 });
 
-test('explicit Device selection writes the mapped Jira Device ID', () => {
+test('explicit Device selection writes the mapped Jira device identifier', () => {
   assert.match(ticketSync,/cfg\.jiraAssetField\?\.id/);
   assert.match(ticketSync,/asset\.jiraIdentifier \|\| asset\.name/);
   assert.match(ticketSync,/cfg\.jiraAssetField\.id/);
-  assert.match(deviceField,/Choosing an asset writes its Device ID to the mapped Jira Device ID field/);
+  assert.match(deviceField,/Choosing an asset writes its identifier to the mapped Jira device identifier field/);
 });
 
 test('ticket autofill is wired through a dedicated Forge resolver with write scope', () => {
