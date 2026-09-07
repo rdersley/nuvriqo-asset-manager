@@ -47,6 +47,9 @@ jobs:
       - name: Disable Forge usage analytics
         run: forge settings set usage-analytics false
 
+      - name: Prepare Device Fault backend mapping
+        run: node scripts/prepare-device-fault.mjs
+
       - name: Check resolver syntax
         run: |
           node --check src/index.js
@@ -153,6 +156,9 @@ jobs:
 
       - name: Install Reports UI dependencies
         run: npm --prefix reports-static install
+
+      - name: Prepare Device Fault backend mapping
+        run: node scripts/prepare-device-fault.mjs
 
       - name: Build Asset Manager UI
         run: npm --prefix static run build
