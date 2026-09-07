@@ -76,6 +76,7 @@ function detectDevices(text, assets, source = 'description') {
       });
     }
 
+    // Fall back to identifier-shaped tokens even when the asset has not yet been imported.
     const tokenMatches = line.match(/\b[A-Z0-9]{2,}(?:[_-][A-Z0-9]{2,}){1,}\b/gi) || [];
     for (const token of tokenMatches) {
       const key = normalise(token);
@@ -121,14 +122,34 @@ async function loadIssue(issueKey) {
 }
 
 async function subtaskIssueType(projectId) {
-  const response = await api.asUser().requestJira(route`/rest/api/3/issuetype/project?projectId=${projectId}&level=-1`, {
-    headers: { Accept: 'application/json' }
-  });
-  if (!response.ok) throw new Error(`Could not load sub-task issue types (${response.status}).`);
-  const types = await response.json();
-  const type = Array.isArray(types) ? types.find((item) => item.subtask || Number(item.hierarchyLevel) === -1) : null;
-  if (!type?.id) throw new Error('This Jira project does not have a sub-task issue type configured.');
-  return type;
+  // First use the project issue-type endpoint. This works for most company-managed
+  // and team-managed projects where a level -1 issue type is available.
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/issuetype/project?projectId=${projectId}&level=-1`, {
+      headers: { Accept: 'application/json' }
+    });
+    if (response.ok) {
+      const types = await response.json();
+      const type = Array.isArray(types) ? types.find((item) => item.subtask || Number(item.hierarchyLevel) === -1) : null;
+      if (type?.id) return type;
+    }
+  } catch {}
+
+  // Jira also exposes the project hierarchy. Use it as a second discovery path
+  // because some projects do not return their sub-task type from the endpoint above.
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/project/${projectId}/hierarchy`, {
+      headers: { Accept: 'application/json' }
+    });
+    if (response.ok) {
+      const data = await response.json();
+      const level = Array.isArray(data?.hierarchy) ? data.hierarchy.find((entry) => Number(entry.level) === -1) : null;
+      const type = Array.isArray(level?.issueTypes) ? level.issueTypes[0] : null;
+      if (type?.id) return { ...type, subtask: true, hierarchyLevel: -1 };
+    }
+  } catch {}
+
+  return null;
 }
 
 async function addHistory(assetId, event) {
@@ -169,11 +190,17 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
   );
   const items = await splitState(issueKey, detected);
   const type = issue.fields?.project?.id ? await subtaskIssueType(issue.fields.project.id) : null;
+
+  // Device detection must still be shown even if the Jira project has no usable
+  // sub-task issue type. Previously the preview threw here, which made a valid list
+  // of detected devices look like "0 devices detected" in the modal.
   return {
     issueKey,
     summary: issue.fields?.summary || issueKey,
     projectId: issue.fields?.project?.id || '',
-    subtaskType: type ? { id: type.id, name: type.name } : null,
+    subtaskType: type ? { id: String(type.id), name: type.name || 'Sub-task' } : null,
+    canCreateSubtasks: Boolean(type?.id),
+    subtaskWarning: type?.id ? '' : 'No Jira sub-task issue type is currently available for this project. The devices can be reviewed, but Jira must have a sub-task issue type enabled before they can be created.',
     items,
     textFound: Boolean(summaryText || descriptionText),
     scannedSources: ['summary', 'description']
@@ -190,6 +217,10 @@ resolver.define('createDeviceSubtasks', async ({ payload, context }) => {
   const projectId = issue.fields?.project?.id;
   if (!projectId) throw new Error('Could not determine the Jira project.');
   const type = await subtaskIssueType(projectId);
+  if (!type?.id) {
+    throw new Error('The devices were detected, but this Jira project does not currently expose a sub-task issue type. Enable/add a sub-task issue type to the project, then reopen Split Devices.');
+  }
+
   const cfg = (await kvs.get(SETTINGS_KEY)) || {};
   const assetFieldId = cfg.jiraAssetField?.id || '';
   const assets = await queryAllByPrefix(ASSET_PREFIX);
@@ -210,7 +241,7 @@ resolver.define('createDeviceSubtasks', async ({ payload, context }) => {
     const fault = clean(raw?.fault);
     const fields = {
       project: { id: projectId },
-      issuetype: { id: type.id },
+      issuetype: { id: String(type.id) },
       parent: { key: issueKey },
       summary: `${identifier} - ${fault || 'Device issue'}`.slice(0, 255),
       description: childDescription(issueKey, identifier, fault)
