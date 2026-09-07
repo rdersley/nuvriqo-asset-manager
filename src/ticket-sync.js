@@ -50,7 +50,7 @@ async function updateIssue(issueKey, asset, choices = {}) {
   const updated = [];
   if (cfg.jiraAssetField?.id && clean(asset.jiraIdentifier || asset.name)) {
     fields[cfg.jiraAssetField.id] = jiraValue(byId.get(cfg.jiraAssetField.id), asset.jiraIdentifier || asset.name);
-    updated.push(cfg.jiraAssetField.name || 'Device ID');
+    updated.push(cfg.jiraAssetField.name || 'Device identifier');
   }
   if (choices.deviceType !== false && cfg.jiraTypeField?.id && clean(asset.type)) {
     fields[cfg.jiraTypeField.id] = jiraValue(byId.get(cfg.jiraTypeField.id), asset.type);
@@ -58,7 +58,7 @@ async function updateIssue(issueKey, asset, choices = {}) {
   }
   if (choices.location === true && cfg.jiraLocationField?.id && clean(asset.location)) {
     fields[cfg.jiraLocationField.id] = jiraValue(byId.get(cfg.jiraLocationField.id), asset.location);
-    updated.push(cfg.jiraLocationField.name || 'Base / location');
+    updated.push(cfg.jiraLocationField.name || 'Location');
   }
   if (choices.owner === true && cfg.jiraCrewCodeField?.id && clean(asset.crewCode)) {
     fields[cfg.jiraCrewCodeField.id] = jiraValue(byId.get(cfg.jiraCrewCodeField.id), asset.crewCode);
