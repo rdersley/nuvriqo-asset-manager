@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const path=new URL('../src/main.jsx',import.meta.url);
+let src=fs.readFileSync(path,'utf8');
+if(!src.includes("import ReportsWorkspace from './ReportsWorkspace';")) src=src.replace("import ImportDialog from './ImportDialog';","import ImportDialog from './ImportDialog';\nimport ReportsWorkspace from './ReportsWorkspace';");
+src=src.replace(/function Reports\(\{ onBack, onOpenAsset \}\) \{[\s\S]*?\n\}\n\nfunction IssuePanel/,"function Reports({ onBack }) { return <ReportsWorkspace onBack={onBack} />; }\n\nfunction IssuePanel");
+const old="useEffect(()=>{view.getContext().then(setContext);},[]); useEffect(()=>{if(context?.extension?.type!=='jira:issuePanel')load().catch(e=>setMessage(e.message));},[query,status,type,location,context]);";
+const replacement="useEffect(()=>{view.getContext().then(setContext);},[]); useEffect(()=>{let unlisten; view.createHistory().then((history)=>{const apply=(location)=>{const route=(location?.pathname||'').replace(/^\\/+|\\/+$/g,''); if(route==='reports')setMode('reports'); else if(route==='overview'||route==='')setMode('overview');}; apply(history.location); unlisten=history.listen((location)=>apply(location));}).catch(()=>{}); return()=>unlisten?.();},[]); useEffect(()=>{if(context?.extension?.type!=='jira:issuePanel')load().catch(e=>setMessage(e.message));},[query,status,type,location,context]);";
+if(src.includes(old)) src=src.replace(old,replacement);
+else if(!src.includes('view.createHistory().then')) throw new Error('Could not locate Asset Manager routing hook.');
+fs.writeFileSync(path,src);
