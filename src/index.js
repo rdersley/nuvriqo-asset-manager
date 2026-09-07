@@ -144,7 +144,33 @@ resolver.define('getJiraCustomFields',async()=>getJiraCustomFields());
 resolver.define('searchDevices',async({payload})=>{const query=normaliseName(payload?.query||'');const assets=await queryAllByPrefix(ASSET_PREFIX);return assets.filter(a=>!query||normaliseName(a.name).includes(query)||normaliseName(a.jiraIdentifier).includes(query)).sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'})).slice(0,50).map(a=>({id:a.id,name:a.name}));});
 resolver.define('getAssetByName',async({payload})=>{const name=clean(payload?.name||'');if(!name)return null;const indexed=await kvs.get(nameIndexKey(name));if(indexed?.assetId)return kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);const assets=await queryAllByPrefix(ASSET_PREFIX);return assets.find(a=>normaliseName(a.name)===normaliseName(name))||null;});
 resolver.define('getAsset',async({payload})=>payload?.id?kvs.get(`${ASSET_PREFIX}${payload.id}`):null);resolver.define('saveAsset',async({payload})=>saveOneAsset(payload?.asset||{},'manual'));
-resolver.define('bulkImportAssets',async({payload})=>{const rows=safeArray(payload?.assets);if(!rows.length)return{imported:0,failed:[]};const failed=[];let imported=0;for(let i=0;i<rows.length;i+=1){try{await saveOneAsset(rows[i],'bulk-import');imported+=1;}catch(error){failed.push({row:i+2,deviceName:clean(rows[i]?.name||''),message:error?.message||'Import failed'});}}return{imported,failed};});
+resolver.define('bulkImportAssets',async({payload})=>{
+  const rows=safeArray(payload?.assets);
+  if(!rows.length)return{imported:0,failed:[],deviceTypesAdded:[]};
+  const initialSettings=await getSettingsValue();
+  const knownTypes=new Map(safeArray(initialSettings.assetTypes).map(type=>[normaliseName(type),clean(type)]).filter(([key])=>key));
+  const discoveredTypes=new Map();
+  const failed=[];let imported=0;
+  for(let i=0;i<rows.length;i+=1){
+    const rawType=clean(rows[i]?.type||'');
+    const typeKey=normaliseName(rawType);
+    const canonicalType=typeKey?(knownTypes.get(typeKey)||discoveredTypes.get(typeKey)||rawType):rows[i]?.type;
+    try{
+      await saveOneAsset({...rows[i],...(typeKey?{type:canonicalType}:{})},'bulk-import');
+      imported+=1;
+      if(typeKey&&!knownTypes.has(typeKey)&&!discoveredTypes.has(typeKey))discoveredTypes.set(typeKey,rawType);
+    }catch(error){failed.push({row:i+2,deviceName:clean(rows[i]?.name||''),message:error?.message||'Import failed'});}
+  }
+  const deviceTypesAdded=[...discoveredTypes.values()];
+  if(deviceTypesAdded.length){
+    const latestSettings=await getSettingsValue();
+    const mergedTypes=[...safeArray(latestSettings.assetTypes)];
+    const mergedKeys=new Set(mergedTypes.map(normaliseName));
+    for(const type of deviceTypesAdded){const key=normaliseName(type);if(key&&!mergedKeys.has(key)){mergedTypes.push(type);mergedKeys.add(key);}}
+    await kvs.set(SETTINGS_KEY,{...latestSettings,assetTypes:mergedTypes});
+  }
+  return{imported,failed,deviceTypesAdded};
+});
 resolver.define('deleteAsset',async({payload})=>{if(!payload?.id)throw new Error('Asset id is required.');const asset=await kvs.get(`${ASSET_PREFIX}${payload.id}`);if(!asset)return{ok:true};const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===payload.id).map(l=>l.issueKey).filter(Boolean);let linkedTickets;try{linkedTickets=await searchAssetTickets(payload.id,legacyKeys);}catch{throw new Error('Could not verify whether this device is linked to Jira tickets. Please try again before deleting it.');}if(linkedTickets.length)throw new Error(`This device is linked to ${linkedTickets.length} Jira ticket${linkedTickets.length===1?'':'s'}. Clear the configured Jira asset field or unlink those tickets before deleting the device.`);await kvs.delete(`${ASSET_PREFIX}${payload.id}`);if(asset.name)await kvs.delete(nameIndexKey(asset.name));await addHistory(payload.id,{type:'deleted',source:'manual',message:'Asset deleted',deviceName:asset.name});return{ok:true};});
 resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
 resolver.define('getSettings',async()=>getSettingsValue());
