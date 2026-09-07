@@ -6,6 +6,12 @@ modules:
         function: resolver
       title: Asset Manager
       layout: blank
+    - key: nuvriqo-asset-reports
+      resource: asset-reports
+      resolver:
+        function: reporting
+      title: Asset Reports
+      layout: blank
 
   jira:issuePanel:
     - key: nuvriqo-asset-issue-panel
@@ -66,6 +72,8 @@ modules:
       handler: issue-panel.handler
     - key: portal-assets
       handler: portal-assets.handler
+    - key: reporting
+      handler: reporting.handler
 
 resources:
   - key: main
@@ -76,6 +84,8 @@ resources:
     path: field-static/dist
   - key: portal-assets
     path: portal-static/dist
+  - key: asset-reports
+    path: report-static/dist
 
 permissions:
   scopes:
