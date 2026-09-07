@@ -51,7 +51,7 @@ function assetIdentifiers(asset) {
   return [...new Set([asset?.jiraIdentifier, asset?.name, asset?.serialNumber].map(clean).filter(Boolean))];
 }
 
-function detectDevices(text, assets) {
+function detectDevices(text, assets, source = 'description') {
   const rows = String(text || '').split(/\r?\n/).map(stripLead).filter(Boolean);
   const found = [];
   const seen = new Set();
@@ -71,7 +71,8 @@ function detectDevices(text, assets) {
         assetId: match.asset.id,
         assetName: match.asset.name || match.identifier,
         fault: faultAfterIdentifier(line, match.identifier),
-        recognised: true
+        recognised: true,
+        source
       });
     }
 
@@ -80,11 +81,35 @@ function detectDevices(text, assets) {
       const key = normalise(token);
       if (seen.has(key)) continue;
       seen.add(key);
-      found.push({ identifier: token, assetId: '', assetName: token, fault: faultAfterIdentifier(line, token), recognised: false });
+      found.push({ identifier: token, assetId: '', assetName: token, fault: faultAfterIdentifier(line, token), recognised: false, source });
     }
   }
 
   return found;
+}
+
+function mergeDetected(...groups) {
+  const merged = new Map();
+  for (const group of groups) {
+    for (const item of group) {
+      const key = normalise(item.identifier);
+      if (!key) continue;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, item);
+        continue;
+      }
+      merged.set(key, {
+        ...existing,
+        assetId: existing.assetId || item.assetId,
+        assetName: existing.assetName || item.assetName,
+        recognised: existing.recognised || item.recognised,
+        fault: existing.fault || item.fault,
+        source: existing.source === item.source ? existing.source : 'summary + description'
+      });
+    }
+  }
+  return [...merged.values()];
 }
 
 async function loadIssue(issueKey) {
@@ -136,8 +161,12 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
   if (!issueKey) throw new Error('Issue is required.');
   const issue = await loadIssue(issueKey);
   const assets = await queryAllByPrefix(ASSET_PREFIX);
-  const text = adfToText(issue.fields?.description);
-  const detected = detectDevices(text, assets);
+  const summaryText = clean(issue.fields?.summary);
+  const descriptionText = adfToText(issue.fields?.description);
+  const detected = mergeDetected(
+    detectDevices(summaryText, assets, 'summary'),
+    detectDevices(descriptionText, assets, 'description')
+  );
   const items = await splitState(issueKey, detected);
   const type = issue.fields?.project?.id ? await subtaskIssueType(issue.fields.project.id) : null;
   return {
@@ -146,7 +175,8 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
     projectId: issue.fields?.project?.id || '',
     subtaskType: type ? { id: type.id, name: type.name } : null,
     items,
-    textFound: Boolean(text.trim())
+    textFound: Boolean(summaryText || descriptionText),
+    scannedSources: ['summary', 'description']
   };
 });
 
