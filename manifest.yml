@@ -28,6 +28,14 @@ modules:
       title: Device / Asset
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
 
+  jira:issueAction:
+    - key: nuvriqo-split-devices
+      resource: split-action
+      resolver:
+        function: device-split
+      title: Split Devices
+      viewportSize: medium
+
   jira:customField:
     - key: nuvriqo-device-field
       name: Device
@@ -77,6 +85,8 @@ modules:
       handler: ticket-sync.handler
     - key: issue-panel
       handler: issue-panel.handler
+    - key: device-split
+      handler: device-split.handler
     - key: portal-assets
       handler: portal-assets.handler
     - key: reports
@@ -87,6 +97,8 @@ resources:
     path: static/dist
   - key: issue-panel
     path: panel-static/dist
+  - key: split-action
+    path: split-static/dist
   - key: device-field
     path: field-static/dist
   - key: portal-assets
