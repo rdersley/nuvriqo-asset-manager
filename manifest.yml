@@ -11,6 +11,8 @@ modules:
           route: overview
         - title: Reports
           route: reports
+
+  jira:adminPage:
     - key: nuvriqo-asset-manager-reports
       resource: reports
       resolver:
