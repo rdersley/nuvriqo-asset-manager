@@ -6,10 +6,10 @@
     "postinstall": "npm --prefix static install && npm --prefix field-static install",
     "build": "npm --prefix static run build && npm --prefix field-static run build",
     "test": "npm --prefix static test",
-    "qa:test": "node --test qa/qa-simulations.test.mjs",
+    "qa:test": "node --test qa/qa-simulations.test.mjs qa/portal-plus-provider.test.mjs",
     "qa:live": "node qa/live-jira-smoke.mjs",
     "qa": "npm test && npm run qa:test",
-    "validate": "node --check src/index.js && npm run qa && npm run build",
+    "validate": "node --check src/index.js && node --check src/portal-assets.js && node --check src/portal-plus-provider.js && npm run qa && npm run build",
     "install:ui": "npm --prefix static install && npm --prefix field-static install"
   },
   "dependencies": {
