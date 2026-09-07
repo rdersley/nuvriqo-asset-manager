@@ -1,0 +1,37 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { invoke } from '@forge/bridge';
+import './styles.css';
+
+const fmtDate=(v)=>v?new Date(v).toLocaleDateString():'—';
+const esc=(v)=>{const s=String(v??'');return /[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s;};
+function downloadCsv(name,headers,rows){const csv=[headers,...rows].map(r=>r.map(esc).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);}
+function GroupTable({title,rows}){return <div className="card"><h2>{title}</h2><table><thead><tr><th>Name</th><th>Assets</th></tr></thead><tbody>{rows.slice(0,20).map(r=><tr key={r.name}><td>{r.name}</td><td>{r.count}</td></tr>)}</tbody></table></div>}
+
+function App(){
+ const [data,setData]=useState(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[tab,setTab]=useState('inventory'),[query,setQuery]=useState('');
+ useEffect(()=>{invoke('getReportingData').then(setData).catch(e=>setError(e?.message||'Could not load reports.')).finally(()=>setLoading(false));},[]);
+ const rows=useMemo(()=>{const q=query.trim().toLowerCase();if(!data?.rows)return[];if(!q)return data.rows;return data.rows.filter(r=>[r.name,r.deviceId,r.type,r.manufacturer,r.model,r.serialNumber,r.holder,r.status,r.location,...r.organisations].some(v=>String(v||'').toLowerCase().includes(q)));},[data,query]);
+ if(loading)return <main><div className="card">Loading Asset Manager reporting…</div></main>;
+ if(error)return <main><div className="card error">{error}</div></main>;
+ const s=data.summary;
+ const quality=rows.filter(r=>r.qualityIssues>0);
+ const faults=[...rows].sort((a,b)=>b.faults-a.faults||b.openFaults-a.openFaults);
+ const assignments=[...rows].sort((a,b)=>(a.holder||'').localeCompare(b.holder||'')||a.name.localeCompare(b.name));
+ const lifecycle=rows.filter(r=>r.warrantyState!=='Unknown').sort((a,b)=>String(a.warrantyExpiry).localeCompare(String(b.warrantyExpiry)));
+ const inventoryExport=()=>downloadCsv(`nuvriqo-inventory-${new Date().toISOString().slice(0,10)}.csv`,['Device','Device ID','Type','Manufacturer','Model','Serial','Holder','Assignment Reference','Status','Location','Organisation','Purchase Date','Warranty Expiry','Warranty State','Primary Faults','Open Faults','Data Quality Issues'],rows.map(r=>[r.name,r.deviceId,r.type,r.manufacturer,r.model,r.serialNumber,r.holder,r.assignmentReference,r.status,r.location,r.organisations.join('; '),r.purchaseDate,r.warrantyExpiry,r.warrantyState,r.faults,r.openFaults,r.missing.join('; ')]));
+ return <main>
+  <header><div><span className="brand">NUVRIQO</span><h1>Asset Manager Reports</h1><p>Operational reporting across inventory, assignments, faults, organisations and data quality.</p></div><button onClick={inventoryExport}>Export current data</button></header>
+  <section className="kpis"><div><small>Total assets</small><strong>{s.totalAssets}</strong></div><div><small>Open faults</small><strong>{s.openFaults}</strong></div><div><small>Unassigned</small><strong>{s.unassigned}</strong></div><div><small>In repair</small><strong>{s.inRepair}</strong></div><div><small>Warranty attention</small><strong>{s.expiredWarranty+s.expiringWarranty}</strong></div><div><small>Data quality</small><strong>{s.qualityIssues}</strong></div></section>
+  <div className="tabs">{[['inventory','Inventory'],['faults','Faults'],['assignment','Assignment'],['organisation','Organisation'],['quality','Data quality'],['lifecycle','Lifecycle']].map(([k,l])=><button key={k} className={tab===k?'active':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
+  <div className="toolbar"><input placeholder="Search reports…" value={query} onChange={e=>setQuery(e.target.value)}/><span>{rows.length} matching assets</span></div>
+  {tab==='inventory'&&<><section className="groups"><GroupTable title="Assets by type" rows={data.byType}/><GroupTable title="Assets by status" rows={data.byStatus}/><GroupTable title="Assets by location" rows={data.byLocation}/></section><div className="card"><h2>Inventory</h2><div className="tablewrap"><table><thead><tr><th>Device</th><th>Type</th><th>Status</th><th>Holder</th><th>Location</th><th>Serial</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td><strong>{r.name}</strong><small>{r.deviceId||''}</small></td><td>{r.type}</td><td>{r.status||'—'}</td><td>{r.holder||'Unassigned'}</td><td>{r.location||'—'}</td><td>{r.serialNumber||'—'}</td></tr>)}</tbody></table></div></div></>}
+  {tab==='faults'&&<div className="card"><h2>Fault history</h2><p>Devices with the highest number of primary Jira faults appear first.</p><div className="tablewrap"><table><thead><tr><th>Device</th><th>Type</th><th>Primary faults</th><th>Open</th><th>Resolved</th><th>Last fault</th></tr></thead><tbody>{faults.map(r=><tr key={r.id}><td><strong>{r.name}</strong></td><td>{r.type}</td><td>{r.faults}</td><td>{r.openFaults}</td><td>{r.resolvedFaults}</td><td>{fmtDate(r.lastFault)}</td></tr>)}</tbody></table></div></div>}
+  {tab==='assignment'&&<><GroupTable title="Assets by holder" rows={data.byHolder}/><div className="card"><h2>Assignment report</h2><div className="tablewrap"><table><thead><tr><th>Holder</th><th>Assignment reference</th><th>Device</th><th>Type</th><th>Status</th><th>Location</th></tr></thead><tbody>{assignments.map(r=><tr key={r.id}><td>{r.holder||'Unassigned'}</td><td>{r.assignmentReference||'—'}</td><td><strong>{r.name}</strong></td><td>{r.type}</td><td>{r.status||'—'}</td><td>{r.location||'—'}</td></tr>)}</tbody></table></div></div></>}
+  {tab==='organisation'&&<><GroupTable title="Assets by organisation" rows={data.byOrganisation}/><div className="card"><h2>Organisation report</h2><p>Organisation is derived from Jira Service Management requests linked through the mapped Device ID field.</p><div className="tablewrap"><table><thead><tr><th>Organisation</th><th>Device</th><th>Type</th><th>Holder</th><th>Open faults</th></tr></thead><tbody>{rows.flatMap(r=>r.organisations.length?r.organisations.map(o=><tr key={`${r.id}-${o}`}><td>{o}</td><td><strong>{r.name}</strong></td><td>{r.type}</td><td>{r.holder||'Unassigned'}</td><td>{r.openFaults}</td></tr>):[<tr key={`${r.id}-none`}><td>Unmapped</td><td><strong>{r.name}</strong></td><td>{r.type}</td><td>{r.holder||'Unassigned'}</td><td>{r.openFaults}</td></tr>])}</tbody></table></div></div></>}
+  {tab==='quality'&&<div className="card"><h2>Data quality report</h2><p>Highlights incomplete asset records that need attention.</p><div className="tablewrap"><table><thead><tr><th>Device</th><th>Missing information</th><th>Type</th><th>Holder</th><th>Location</th></tr></thead><tbody>{quality.map(r=><tr key={r.id}><td><strong>{r.name}</strong></td><td>{r.missing.join(', ')}</td><td>{r.type}</td><td>{r.holder||'Unassigned'}</td><td>{r.location||'—'}</td></tr>)}</tbody></table></div></div>}
+  {tab==='lifecycle'&&<div className="card"><h2>Lifecycle & warranty</h2><div className="tablewrap"><table><thead><tr><th>Device</th><th>Purchase date</th><th>Warranty expiry</th><th>Warranty state</th><th>Status</th></tr></thead><tbody>{lifecycle.map(r=><tr key={r.id}><td><strong>{r.name}</strong></td><td>{fmtDate(r.purchaseDate)}</td><td>{fmtDate(r.warrantyExpiry)}</td><td>{r.warrantyState}</td><td>{r.status||'—'}</td></tr>)}</tbody></table></div></div>}
+ </main>;
+}
+
+createRoot(document.getElementById('root')).render(<App/>);
