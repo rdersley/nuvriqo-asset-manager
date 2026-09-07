@@ -51,6 +51,15 @@ function assetIdentifiers(asset) {
   return [...new Set([asset?.jiraIdentifier, asset?.name, asset?.serialNumber].map(clean).filter(Boolean))];
 }
 
+function isFallbackIdentifier(token) {
+  const value = clean(token);
+  if (!value) return false;
+  // Unrecognised free-text tokens must contain at least one digit. This keeps
+  // genuine device/serial patterns such as RYR_BHX_46 or ABC-123 while rejecting
+  // ordinary hyphenated words such as "re-placed".
+  return /\d/.test(value) && /[_-]/.test(value);
+}
+
 function detectDevices(text, assets, source = 'description') {
   const rows = String(text || '').split(/\r?\n/).map(stripLead).filter(Boolean);
   const found = [];
@@ -77,8 +86,10 @@ function detectDevices(text, assets, source = 'description') {
     }
 
     // Fall back to identifier-shaped tokens even when the asset has not yet been imported.
+    // Keep this deliberately conservative so normal prose is not mistaken for a device.
     const tokenMatches = line.match(/\b[A-Z0-9]{2,}(?:[_-][A-Z0-9]{2,}){1,}\b/gi) || [];
     for (const token of tokenMatches) {
+      if (!isFallbackIdentifier(token)) continue;
       const key = normalise(token);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -122,8 +133,6 @@ async function loadIssue(issueKey) {
 }
 
 async function subtaskIssueType(projectId) {
-  // First use the project issue-type endpoint. This works for most company-managed
-  // and team-managed projects where a level -1 issue type is available.
   try {
     const response = await api.asUser().requestJira(route`/rest/api/3/issuetype/project?projectId=${projectId}&level=-1`, {
       headers: { Accept: 'application/json' }
@@ -135,8 +144,6 @@ async function subtaskIssueType(projectId) {
     }
   } catch {}
 
-  // Jira also exposes the project hierarchy. Use it as a second discovery path
-  // because some projects do not return their sub-task type from the endpoint above.
   try {
     const response = await api.asUser().requestJira(route`/rest/api/3/project/${projectId}/hierarchy`, {
       headers: { Accept: 'application/json' }
@@ -191,9 +198,6 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
   const items = await splitState(issueKey, detected);
   const type = issue.fields?.project?.id ? await subtaskIssueType(issue.fields.project.id) : null;
 
-  // Device detection must still be shown even if the Jira project has no usable
-  // sub-task issue type. Previously the preview threw here, which made a valid list
-  // of detected devices look like "0 devices detected" in the modal.
   return {
     issueKey,
     summary: issue.fields?.summary || issueKey,
