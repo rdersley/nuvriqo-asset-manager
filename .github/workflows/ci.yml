@@ -35,6 +35,9 @@ jobs:
       - name: Install Issue panel UI dependencies
         run: npm --prefix panel-static install
 
+      - name: Install Device split UI dependencies
+        run: npm --prefix split-static install
+
       - name: Install Customer portal UI dependencies
         run: npm --prefix portal-static install
 
@@ -55,6 +58,7 @@ jobs:
           node --check src/index.js
           node --check src/ticket-sync.js
           node --check src/issue-panel.js
+          node --check src/device-split.js
           node --check src/portal-assets.js
           node --check src/reports.js
 
@@ -72,6 +76,9 @@ jobs:
 
       - name: Build Issue panel UI
         run: npm --prefix panel-static run build
+
+      - name: Build Device split UI
+        run: npm --prefix split-static run build
 
       - name: Build Customer portal UI
         run: npm --prefix portal-static run build
@@ -151,6 +158,9 @@ jobs:
       - name: Install Issue panel UI dependencies
         run: npm --prefix panel-static install
 
+      - name: Install Device split UI dependencies
+        run: npm --prefix split-static install
+
       - name: Install Customer portal UI dependencies
         run: npm --prefix portal-static install
 
@@ -168,6 +178,9 @@ jobs:
 
       - name: Build Issue panel UI
         run: npm --prefix panel-static run build
+
+      - name: Build Device split UI
+        run: npm --prefix split-static run build
 
       - name: Build Customer portal UI
         run: npm --prefix portal-static run build
