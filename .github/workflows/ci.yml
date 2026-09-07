@@ -38,6 +38,9 @@ jobs:
       - name: Install Customer portal UI dependencies
         run: npm --prefix portal-static install
 
+      - name: Install Reports UI dependencies
+        run: npm --prefix report-static install
+
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
 
@@ -50,6 +53,7 @@ jobs:
           node --check src/ticket-sync.js
           node --check src/issue-panel.js
           node --check src/portal-assets.js
+          node --check src/reporting.js
 
       - name: Run import validation tests
         run: npm --prefix static test
@@ -68,6 +72,9 @@ jobs:
 
       - name: Build Customer portal UI
         run: npm --prefix portal-static run build
+
+      - name: Build Reports UI
+        run: npm --prefix report-static run build
 
       - name: Forge lint
         shell: bash
@@ -144,6 +151,9 @@ jobs:
       - name: Install Customer portal UI dependencies
         run: npm --prefix portal-static install
 
+      - name: Install Reports UI dependencies
+        run: npm --prefix report-static install
+
       - name: Build Asset Manager UI
         run: npm --prefix static run build
 
@@ -155,6 +165,9 @@ jobs:
 
       - name: Build Customer portal UI
         run: npm --prefix portal-static run build
+
+      - name: Build Reports UI
+        run: npm --prefix report-static run build
 
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
