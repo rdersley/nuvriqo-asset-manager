@@ -37,7 +37,7 @@ const navNeedle="function NavButton({ active, icon, children, onClick }) { retur
 const navHelper=`${navNeedle}\nfunction PersistentNav({ mode, onNavigate, onImport }) { return <aside className=\"nv-sidebar\"><div className=\"nv-brand\"><div className=\"nv-logo\">N</div><div><strong>Nuvriqo</strong><small>Asset Manager</small></div></div><nav><NavButton active={mode==='overview'} icon=\"⌂\" onClick={()=>onNavigate('overview')}>Overview</NavButton><NavButton active={mode==='assets'||mode==='detail'||mode==='form'} icon=\"▣\" onClick={()=>onNavigate('assets')}>Assets</NavButton><NavButton icon=\"⇧\" onClick={onImport}>Imports</NavButton><NavButton active={mode==='reports'} icon=\"▥\" onClick={()=>onNavigate('reports')}>Reports</NavButton><NavButton active={mode==='settings'} icon=\"⚙\" onClick={()=>onNavigate('settings')}>Configuration</NavButton></nav><div className=\"nv-sidebar-bottom\"><span>Help & Support</span><span>Documentation</span><span className=\"nv-version\">Nuvriqo · UI v1</span></div></aside>; }`;
 if(src.includes(navNeedle)&&!src.includes('function PersistentNav(')) src=src.replace(navNeedle,navHelper);
 const wrapScreen=(modeName)=>{
-  const re=new RegExp(`if\\(mode==='${modeName}'([^\\n]*?)return <main>([\\s\\S]*?)<\\/main>;`);
+  const re=new RegExp(`if\\(mode==='${modeName}'([^\\n]*?)\\)return <main>([\\s\\S]*?)<\\/main>;`);
   const match=src.match(re);
   if(!match) return;
   const condition=match[1]||'';
