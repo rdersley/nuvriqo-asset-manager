@@ -1,15 +1,41 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import sql from '@forge/sql';
+import { sqlRowToAsset } from './sql-storage.js';
 
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
 const SETTINGS_KEY = 'settings:asset-manager';
+const MIGRATION_KEY = 'kvs-assets-to-sql-v1';
 const clean = (v) => typeof v === 'string' ? v.trim() : v;
 const normalise = (v) => String(clean(v) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
 const safeArray = (v) => Array.isArray(v) ? v : [];
 
-async function allAssets() {
+async function migrationComplete() {
+  try {
+    const result = await sql.prepare('SELECT status FROM DataMigrationState WHERE migration_key = ? LIMIT 1').bindParams(MIGRATION_KEY).execute();
+    return result.rows?.[0]?.status === 'complete';
+  } catch {
+    return false;
+  }
+}
+
+async function sqlAssets() {
+  const values = [];
+  let offset = 0;
+  const pageSize = 500;
+  while (true) {
+    const result = await sql.prepare(`SELECT * FROM Assets ORDER BY name LIMIT ${pageSize} OFFSET ${offset}`).execute();
+    const rows = result.rows || [];
+    values.push(...rows.map(sqlRowToAsset));
+    if (rows.length < pageSize) break;
+    offset += rows.length;
+  }
+  return values;
+}
+
+async function kvsAssets() {
   const values = [];
   let cursor;
   do {
@@ -20,6 +46,14 @@ async function allAssets() {
     cursor = page.nextCursor;
   } while (cursor);
   return values;
+}
+
+async function allAssets() {
+  if (await migrationComplete()) {
+    try { return await sqlAssets(); }
+    catch (error) { console.warn('SQL reporting fallback to KVS:', error?.message || error); }
+  }
+  return kvsAssets();
 }
 
 function fieldValues(value) {
@@ -133,6 +167,7 @@ resolver.define('getReportingData', async () => {
 
   return {
     generatedAt: new Date().toISOString(),
+    storage: await migrationComplete() ? 'sql' : 'kvs',
     summary: { totalAssets: rows.length, inRepair, unassigned, openFaults, expiredWarranty: expired, expiringWarranty: expiringSoon, qualityIssues: rows.filter((r) => r.qualityIssues > 0).length },
     byType: groupCount(rows, (r) => r.type),
     byStatus: groupCount(rows, (r) => r.status),
