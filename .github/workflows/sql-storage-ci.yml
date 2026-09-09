@@ -31,6 +31,7 @@ jobs:
           node --check src/sql-migration.js
           node --check src/index.js
           node --check src/ticket-sync.js
+          node --check src/reports.js
 
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
