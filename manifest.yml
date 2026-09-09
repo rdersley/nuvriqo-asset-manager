@@ -1,4 +1,13 @@
 modules:
+  sql:
+    - key: main
+      engine: mysql
+
+  scheduledTrigger:
+    - key: asset-manager-sql-schema
+      function: sql-schema-migration
+      interval: hour
+
   jira:globalPage:
     - key: nuvriqo-asset-manager
       resource: main
@@ -91,6 +100,9 @@ modules:
       handler: portal-assets.handler
     - key: reports
       handler: reports.handler
+    - key: sql-schema-migration
+      handler: sql-schema.runSqlSchemaMigration
+      timeoutSeconds: 60
 
 resources:
   - key: main
