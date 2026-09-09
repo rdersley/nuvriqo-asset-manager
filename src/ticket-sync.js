@@ -4,24 +4,15 @@ import { kvs, WhereConditions } from '@forge/kvs';
 
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
+const ASSET_NAME_PREFIX = 'asset-name:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const HISTORY_PREFIX = 'asset-history:';
+const SEARCH_LIMIT = 50;
+const SEARCH_PAGE_SIZE = 100;
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const now = () => new Date().toISOString();
 const normalise = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
-
-async function allAssets() {
-  const values = [];
-  let cursor;
-  do {
-    let query = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
-    if (cursor) query = query.cursor(cursor);
-    const page = await query.getMany();
-    values.push(...page.results.map((entry) => entry.value));
-    cursor = page.nextCursor;
-  } while (cursor);
-  return values;
-}
+const nameIndexKey = (value) => `${ASSET_NAME_PREFIX}${Buffer.from(normalise(value), 'utf8').toString('base64url')}`;
 
 async function settings() { return (await kvs.get(SETTINGS_KEY)) || {}; }
 
@@ -67,22 +58,62 @@ async function updateIssue(issueKey, asset, choices = {}) {
   if (!Object.keys(fields).length) return { updated: [], skipped: true, reason: 'No mapped asset fields were selected.' };
   const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
   if (!response.ok) { let detail=''; try{detail=JSON.stringify(await response.json());}catch{} throw new Error(`Could not update Jira ticket fields (${response.status}).${detail ? ` ${detail.slice(0,300)}` : ''}`); }
-  await kvs.set(`${HISTORY_PREFIX}${asset.id}:${now()}:ticket-sync`, { assetId:asset.id,timestamp:now(),type:'ticket-field-sync',source:'jira',issueKey,message:`${issueKey} updated from Asset Manager`,fields:updated });
+  const timestamp = now();
+  await kvs.set(`${HISTORY_PREFIX}${asset.id}:${timestamp}:ticket-sync`, { assetId:asset.id,timestamp,type:'ticket-field-sync',source:'jira',issueKey,message:`${issueKey} updated from Asset Manager`,fields:updated });
   return { updated, skipped:false };
+}
+
+function matchesAsset(asset, query) {
+  if (!query) return true;
+  return [asset.name, asset.jiraIdentifier, asset.type, asset.manufacturer, asset.model, asset.location, asset.assigneeName, asset.crewCode, asset.serialNumber]
+    .some((value) => normalise(value).includes(query));
+}
+
+function toSearchResult(asset) {
+  return { id:asset.id,name:asset.name,identifier:asset.jiraIdentifier||asset.name,type:asset.type||'',manufacturer:asset.manufacturer||'',model:asset.model||'',location:asset.location||'',assignmentReference:asset.crewCode||'',holder:asset.assigneeName||asset.crewCode||'',status:asset.status||'',serialNumber:asset.serialNumber||'' };
+}
+
+async function exactIndexedAsset(query) {
+  if (!query) return null;
+  const index = await kvs.get(nameIndexKey(query));
+  if (!index?.assetId) return null;
+  return (await kvs.get(`${ASSET_PREFIX}${index.assetId}`)) || null;
+}
+
+async function searchAssets(query) {
+  const results = [];
+  const seen = new Set();
+  const exact = await exactIndexedAsset(query);
+  if (exact && matchesAsset(exact, query)) {
+    results.push(exact);
+    seen.add(exact.id);
+  }
+
+  let cursor;
+  do {
+    let request = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(SEARCH_PAGE_SIZE);
+    if (cursor) request = request.cursor(cursor);
+    const page = await request.getMany();
+    for (const entry of page.results) {
+      const asset = entry.value;
+      if (!asset?.id || seen.has(asset.id) || !matchesAsset(asset, query)) continue;
+      results.push(asset);
+      seen.add(asset.id);
+      if (results.length >= SEARCH_LIMIT) break;
+    }
+    if (results.length >= SEARCH_LIMIT) break;
+    cursor = page.nextCursor;
+  } while (cursor);
+
+  return results
+    .sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'}))
+    .slice(0,SEARCH_LIMIT)
+    .map(toSearchResult);
 }
 
 resolver.define('searchDevices', async ({ payload }) => {
   const query = normalise(payload?.query || '');
-  const assets = await allAssets();
-  return assets
-    .filter((asset) => {
-      if (!query) return true;
-      return [asset.name, asset.jiraIdentifier, asset.type, asset.manufacturer, asset.model, asset.location, asset.assigneeName, asset.crewCode, asset.serialNumber]
-        .some((value) => normalise(value).includes(query));
-    })
-    .sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'}))
-    .slice(0,50)
-    .map((asset)=>({ id:asset.id,name:asset.name,identifier:asset.jiraIdentifier||asset.name,type:asset.type||'',manufacturer:asset.manufacturer||'',model:asset.model||'',location:asset.location||'',assignmentReference:asset.crewCode||'',holder:asset.assigneeName||asset.crewCode||'',status:asset.status||'',serialNumber:asset.serialNumber||'' }));
+  return searchAssets(query);
 });
 
 resolver.define('applyAssetToIssue', async ({ payload, context }) => {
