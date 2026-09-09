@@ -45,20 +45,13 @@ async function nextAssetPage(cursor = null, limit = 100) {
   return query.getMany();
 }
 
-resolver.define('prepareSqlStorage', async () => {
+export async function migrateAssetsBatch({ limit = 50, restart = false } = {}) {
   await runSqlSchemaMigration();
-  const existing = await getState();
-  if (!existing) await saveState({ status: 'ready' });
-  return { ready: true, state: (await getState()) || null };
-});
-
-resolver.define('migrateAssetsToSqlBatch', async ({ payload }) => {
-  await runSqlSchemaMigration();
-  const requestedLimit = Math.min(100, Math.max(10, Number(payload?.limit || 50)));
+  const requestedLimit = Math.min(100, Math.max(10, Number(limit || 50)));
   const previous = (await getState()) || {};
-  if (previous.status === 'complete' && payload?.restart !== true) return { complete: true, state: previous };
+  if (previous.status === 'complete' && restart !== true) return { complete: true, state: previous, batch: { processed: 0, migrated: 0, skipped: 0, failed: 0 } };
 
-  const cursor = payload?.restart === true ? null : (previous.cursor_value || null);
+  const cursor = restart === true ? null : (previous.cursor_value || null);
   const page = await nextAssetPage(cursor, requestedLimit);
   let processed = 0;
   let migrated = 0;
@@ -79,7 +72,7 @@ resolver.define('migrateAssetsToSqlBatch', async ({ payload }) => {
   }
 
   const complete = !page.nextCursor;
-  const base = payload?.restart === true ? {} : previous;
+  const base = restart === true ? {} : previous;
   const next = {
     status: complete ? 'complete' : (failed ? 'running-with-errors' : 'running'),
     cursor_value: complete ? null : page.nextCursor,
@@ -88,12 +81,21 @@ resolver.define('migrateAssetsToSqlBatch', async ({ payload }) => {
     skipped_count: Number(base.skipped_count || 0) + skipped,
     failed_count: Number(base.failed_count || 0) + failed,
     last_error: lastError || base.last_error || null,
-    started_at: payload?.restart === true ? nowSql() : (base.started_at || nowSql()),
+    started_at: restart === true ? nowSql() : (base.started_at || nowSql()),
     completed_at: complete ? nowSql() : null
   };
   await saveState(next);
   return { complete, batch: { processed, migrated, skipped, failed }, state: await getState() };
+}
+
+resolver.define('prepareSqlStorage', async () => {
+  await runSqlSchemaMigration();
+  const existing = await getState();
+  if (!existing) await saveState({ status: 'ready' });
+  return { ready: true, state: (await getState()) || null };
 });
+
+resolver.define('migrateAssetsToSqlBatch', async ({ payload }) => migrateAssetsBatch({ limit: payload?.limit, restart: payload?.restart === true }));
 
 resolver.define('getSqlMigrationStatus', async () => {
   await runSqlSchemaMigration();
@@ -101,10 +103,29 @@ resolver.define('getSqlMigrationStatus', async () => {
     getState(),
     sql.prepare('SELECT COUNT(*) AS count FROM Assets').execute()
   ]);
-  return {
-    state: stateResult,
-    sqlAssetCount: Number(sqlCountResult.rows?.[0]?.count || 0)
-  };
+  return { state: stateResult, sqlAssetCount: Number(sqlCountResult.rows?.[0]?.count || 0) };
 });
+
+export async function runSqlDataMigrationScheduled() {
+  const deadline = Date.now() + 45000;
+  let batches = 0;
+  let processed = 0;
+  let migrated = 0;
+  let skipped = 0;
+  let failed = 0;
+  let complete = false;
+  while (Date.now() < deadline && !complete && batches < 20) {
+    const result = await migrateAssetsBatch({ limit: 50 });
+    batches += 1;
+    processed += result.batch?.processed || 0;
+    migrated += result.batch?.migrated || 0;
+    skipped += result.batch?.skipped || 0;
+    failed += result.batch?.failed || 0;
+    complete = result.complete === true;
+    if (!result.batch?.processed) break;
+  }
+  console.log('SQL asset migration scheduled pass', { batches, processed, migrated, skipped, failed, complete });
+  return { batches, processed, migrated, skipped, failed, complete };
+}
 
 export const handler = resolver.getDefinitions();
