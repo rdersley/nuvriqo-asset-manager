@@ -9,12 +9,13 @@
     "qa:test": "node --test qa/qa-simulations.test.mjs",
     "qa:live": "node qa/live-jira-smoke.mjs",
     "qa": "npm test && npm run qa:test",
-    "validate": "node --check src/index.js && node --check src/device-split.js && npm run qa && npm run build",
+    "validate": "node --check src/index.js && node --check src/device-split.js && node --check src/sql-schema.js && node --check src/sql-storage.js && npm run qa && npm run build",
     "install:ui": "npm --prefix static install && npm --prefix field-static install && npm --prefix split-static install"
   },
   "dependencies": {
     "@forge/api": "^5.0.0",
     "@forge/resolver": "^1.7.0",
-    "@forge/kvs": "^1.0.0"
+    "@forge/kvs": "^1.0.0",
+    "@forge/sql": "^4.0.5"
   }
 }
