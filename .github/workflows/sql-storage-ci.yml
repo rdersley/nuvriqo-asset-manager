@@ -28,6 +28,7 @@ jobs:
         run: |
           node --check src/sql-schema.js
           node --check src/sql-storage.js
+          node --check src/sql-migration.js
           node --check src/index.js
           node --check src/ticket-sync.js
 
