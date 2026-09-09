@@ -16,6 +16,6 @@
     "@forge/api": "^5.0.0",
     "@forge/resolver": "^1.7.0",
     "@forge/kvs": "^1.0.0",
-    "@forge/sql": "^3.0.0"
+    "@forge/sql": "^4.0.5"
   }
 }
