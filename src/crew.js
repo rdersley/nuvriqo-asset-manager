@@ -104,7 +104,7 @@ resolver.define('getCrewReport', async () => {
     if (!asset?.crewCode) continue;
     const crew = ensureCrew(asset.crewCode);
     const identifier = asset.jiraIdentifier || asset.name || asset.id;
-    crew.currentDevices.push({ id: asset.id, name: asset.name || identifier, identifier, type: asset.type || '', status: asset.status || '', location: asset.location || '' });
+    crew.currentDevices.push({ id: asset.id, name: asset.name || identifier, identifier, type: asset.type || 'Unspecified', status: asset.status || '', location: asset.location || '' });
     if (identifier) crew.historicalDevices.add(identifier);
   }
   for (const issue of issues) {
@@ -117,7 +117,32 @@ resolver.define('getCrewReport', async () => {
       crew.tickets.push({ key: issue.key, summary: issue.fields?.summary || '', status: issue.fields?.status?.name || '', issueType: issue.fields?.issuetype?.name || '', priority: issue.fields?.priority?.name || '', created: issue.fields?.created || '', resolved: issue.fields?.resolutiondate || '', devices: deviceIds });
     }
   }
-  return [...crewMap.values()].map((crew) => ({ ...crew, historicalDevices: [...crew.historicalDevices], currentDeviceCount: crew.currentDevices.length, historicalDeviceCount: crew.historicalDevices.size, ticketCount: crew.tickets.length, reviewRequired: crew.currentDevices.length > 1, unreturnedIndicator: Math.max(0, crew.currentDevices.length - 1) })).sort((a, b) => a.reviewRequired !== b.reviewRequired ? (a.reviewRequired ? -1 : 1) : String(a.crewCode).localeCompare(String(b.crewCode), undefined, { sensitivity: 'base' }));
+  return [...crewMap.values()].map((crew) => {
+    const typeMap = new Map();
+    for (const device of crew.currentDevices) {
+      const displayType = clean(device.type) || 'Unspecified';
+      const key = normalise(displayType) || 'unspecified';
+      if (!typeMap.has(key)) typeMap.set(key, { type: displayType, count: 0, devices: [] });
+      const group = typeMap.get(key);
+      group.count += 1;
+      group.devices.push(device);
+    }
+    const currentDeviceTypes = [...typeMap.values()].sort((a, b) => String(a.type).localeCompare(String(b.type), undefined, { sensitivity: 'base' }));
+    const duplicateDeviceTypes = currentDeviceTypes.filter((group) => group.count > 1);
+    const unreturnedIndicator = duplicateDeviceTypes.reduce((sum, group) => sum + Math.max(0, group.count - 1), 0);
+    return {
+      ...crew,
+      historicalDevices: [...crew.historicalDevices],
+      currentDeviceTypes,
+      duplicateDeviceTypes,
+      currentDeviceCount: crew.currentDevices.length,
+      currentDeviceTypeCount: currentDeviceTypes.length,
+      historicalDeviceCount: crew.historicalDevices.size,
+      ticketCount: crew.tickets.length,
+      reviewRequired: duplicateDeviceTypes.length > 0,
+      unreturnedIndicator
+    };
+  }).sort((a, b) => a.reviewRequired !== b.reviewRequired ? (a.reviewRequired ? -1 : 1) : String(a.crewCode).localeCompare(String(b.crewCode), undefined, { sensitivity: 'base' }));
 });
 
 resolver.define('deleteCrew', async ({ payload }) => {
