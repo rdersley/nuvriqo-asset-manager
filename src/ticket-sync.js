@@ -1,6 +1,8 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import sql from '@forge/sql';
+import { searchSqlAssets, sqlRowToAsset } from './sql-storage.js';
 
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
@@ -9,6 +11,7 @@ const SETTINGS_KEY = 'settings:asset-manager';
 const HISTORY_PREFIX = 'asset-history:';
 const SEARCH_LIMIT = 50;
 const SEARCH_PAGE_SIZE = 100;
+const MIGRATION_KEY = 'kvs-assets-to-sql-v1';
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const now = () => new Date().toISOString();
 const normalise = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
@@ -73,6 +76,15 @@ function toSearchResult(asset) {
   return { id:asset.id,name:asset.name,identifier:asset.jiraIdentifier||asset.name,type:asset.type||'',manufacturer:asset.manufacturer||'',model:asset.model||'',location:asset.location||'',assignmentReference:asset.crewCode||'',holder:asset.assigneeName||asset.crewCode||'',status:asset.status||'',serialNumber:asset.serialNumber||'' };
 }
 
+async function sqlMigrationComplete() {
+  try {
+    const result = await sql.prepare('SELECT status FROM DataMigrationState WHERE migration_key = ? LIMIT 1').bindParams(MIGRATION_KEY).execute();
+    return result.rows?.[0]?.status === 'complete';
+  } catch {
+    return false;
+  }
+}
+
 async function exactIndexedAsset(query) {
   if (!query) return null;
   const index = await kvs.get(nameIndexKey(query));
@@ -80,15 +92,14 @@ async function exactIndexedAsset(query) {
   return (await kvs.get(`${ASSET_PREFIX}${index.assetId}`)) || null;
 }
 
-async function searchAssets(query) {
-  const results = [];
-  const seen = new Set();
+async function searchKvsAssets(query, seed = []) {
+  const results = [...seed];
+  const seen = new Set(results.map((asset) => asset.id));
   const exact = await exactIndexedAsset(query);
-  if (exact && matchesAsset(exact, query)) {
+  if (exact && !seen.has(exact.id) && matchesAsset(exact, query)) {
     results.push(exact);
     seen.add(exact.id);
   }
-
   let cursor;
   do {
     let request = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(SEARCH_PAGE_SIZE);
@@ -104,8 +115,25 @@ async function searchAssets(query) {
     if (results.length >= SEARCH_LIMIT) break;
     cursor = page.nextCursor;
   } while (cursor);
+  return results;
+}
 
-  return results
+async function searchAssets(query) {
+  let sqlAssets = [];
+  let complete = false;
+  try {
+    complete = await sqlMigrationComplete();
+    sqlAssets = (await searchSqlAssets(query, SEARCH_LIMIT, 0)).map(sqlRowToAsset);
+  } catch {
+    sqlAssets = [];
+    complete = false;
+  }
+
+  const assets = complete
+    ? sqlAssets
+    : await searchKvsAssets(query, sqlAssets);
+
+  return assets
     .sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'}))
     .slice(0,SEARCH_LIMIT)
     .map(toSearchResult);
@@ -119,7 +147,13 @@ resolver.define('searchDevices', async ({ payload }) => {
 resolver.define('applyAssetToIssue', async ({ payload, context }) => {
   const assetId=clean(payload?.assetId||'');
   if(!assetId) throw new Error('Asset is required.');
-  const asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);
+  let asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);
+  if(!asset) {
+    try {
+      const result = await sql.prepare('SELECT * FROM Assets WHERE id = ? LIMIT 1').bindParams(assetId).execute();
+      if (result.rows?.[0]) asset = sqlRowToAsset(result.rows[0]);
+    } catch {}
+  }
   if(!asset) throw new Error('Asset not found.');
   const issueKey=clean(payload?.issueKey||context?.extension?.issue?.key||'');
   return updateIssue(issueKey,asset,payload?.choices||{});
