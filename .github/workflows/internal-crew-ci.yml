@@ -18,9 +18,15 @@ jobs:
           node-version: 22
       - name: Install backend dependencies
         run: npm install --ignore-scripts
-      - name: Check crew resolver syntax
-        run: node --check src/crew.js
+      - name: Check internal resolver syntax
+        run: |
+          node --check src/crew.js
+          node --check src/crew-usage.js
       - name: Install crew UI dependencies
         run: npm --prefix crew-static install
+      - name: Install device usage UI dependencies
+        run: npm --prefix crew-usage-static install
       - name: Build crew tracking UI
         run: npm --prefix crew-static run build
+      - name: Build device usage reconciliation UI
+        run: npm --prefix crew-usage-static run build
