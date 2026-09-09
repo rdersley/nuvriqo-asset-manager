@@ -25,6 +25,12 @@ modules:
         function: crew-tracking
       title: Crew Tracking
       layout: blank
+    - key: nuvriqo-internal-device-usage
+      resource: crew-usage
+      resolver:
+        function: crew-usage
+      title: Device Usage Reconciliation
+      layout: blank
 
   jira:issuePanel:
     - key: nuvriqo-asset-issue-panel
@@ -99,6 +105,8 @@ modules:
       handler: reports.handler
     - key: crew-tracking
       handler: crew.handler
+    - key: crew-usage
+      handler: crew-usage.handler
 
 resources:
   - key: main
@@ -115,6 +123,8 @@ resources:
     path: reports-static/dist
   - key: crew-tracking
     path: crew-static/dist
+  - key: crew-usage
+    path: crew-usage-static/dist
 
 permissions:
   scopes:
