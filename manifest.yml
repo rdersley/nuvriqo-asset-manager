@@ -7,6 +7,9 @@ modules:
     - key: internal-asset-manager-sql-schema
       function: sql-schema-migration
       interval: hour
+    - key: internal-asset-manager-sql-data-migration
+      function: sql-data-migration
+      interval: hour
 
   jira:globalPage:
     - key: nuvriqo-asset-manager
@@ -109,6 +112,9 @@ modules:
       handler: crew.handler
     - key: sql-schema-migration
       handler: sql-schema.runSqlSchemaMigration
+      timeoutSeconds: 60
+    - key: sql-data-migration
+      handler: sql-migration.runInternalSqlDataMigrationScheduled
       timeoutSeconds: 60
 
 resources:
