@@ -8,6 +8,7 @@ const isoToSql = (value) => {
   if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 23).replace('T', ' ');
   return date.toISOString().slice(0, 23).replace('T', ' ');
 };
+const makeEventId = () => `CUST-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
 
 export const assetSourceHash = (asset = {}) => createHash('sha256').update(JSON.stringify({
   name: clean(asset.name || ''), jiraIdentifier: clean(asset.jiraIdentifier || ''), crewCode: clean(asset.crewCode || ''),
@@ -63,4 +64,64 @@ export async function resolveSqlCrew(loginValue) {
   const login = normalise(loginValue); if (!login) return null;
   const result = await sql.prepare(`SELECT * FROM CrewMembers WHERE LOWER(crew_code)=? OR LOWER(easysim_username)=? OR LOWER(ryrwin_username)=? OR LOWER(SUBSTRING_INDEX(email,'@',1))=? LIMIT 1`).bindParams(login,login,login,login).execute();
   return result.rows?.[0] || null;
+}
+
+export async function recordCustodyEvent(event = {}) {
+  const assetId = clean(event.assetId || '');
+  const eventType = clean(event.eventType || '');
+  const state = clean(event.state || '');
+  if (!assetId || !eventType || !state) throw new Error('Asset, event type and custody state are required.');
+  const eventId = clean(event.eventId || makeEventId());
+  await sql.prepare(`INSERT INTO CustodyEvents (
+    event_id,asset_id,crew_code,device_type,event_type,state,source,issue_key,previous_crew_code,related_asset_id,
+    expected_return_at,actual_return_at,notes,occurred_at,created_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .bindParams(
+      eventId, assetId, clean(event.crewCode||''), clean(event.deviceType||'Other'), eventType, state,
+      clean(event.source||'manual'), clean(event.issueKey||''), clean(event.previousCrewCode||''), clean(event.relatedAssetId||''),
+      event.expectedReturnAt ? isoToSql(event.expectedReturnAt) : null,
+      event.actualReturnAt ? isoToSql(event.actualReturnAt) : null,
+      clean(event.notes||''), isoToSql(event.occurredAt), isoToSql(event.createdAt)
+    ).execute();
+  return { eventId };
+}
+
+export async function getOpenCustodyForCrew(crewCode) {
+  const crew = clean(crewCode || '');
+  if (!crew) return [];
+  const result = await sql.prepare(`SELECT c.* FROM CustodyEvents c
+    JOIN (
+      SELECT asset_id, MAX(occurred_at) AS latest_at
+      FROM CustodyEvents GROUP BY asset_id
+    ) latest ON latest.asset_id = c.asset_id AND latest.latest_at = c.occurred_at
+    WHERE LOWER(c.crew_code)=LOWER(?) AND c.state IN ('Issued','Return Expected','Return Overdue','Lost/Unaccounted for')
+    ORDER BY c.device_type, c.occurred_at DESC`).bindParams(crew).execute();
+  return result.rows || [];
+}
+
+export async function findCustodyExceptions() {
+  const duplicateByCrew = await sql.prepare(`SELECT crew_code, device_type, COUNT(*) AS open_count
+    FROM (
+      SELECT c.* FROM CustodyEvents c
+      JOIN (SELECT asset_id, MAX(occurred_at) latest_at FROM CustodyEvents GROUP BY asset_id) latest
+        ON latest.asset_id=c.asset_id AND latest.latest_at=c.occurred_at
+      WHERE c.state IN ('Issued','Return Expected','Return Overdue','Lost/Unaccounted for')
+    ) open_events
+    WHERE crew_code IS NOT NULL AND crew_code <> ''
+    GROUP BY crew_code, device_type HAVING COUNT(*) > 1
+    ORDER BY open_count DESC, crew_code`).execute();
+  const duplicateByAsset = await sql.prepare(`SELECT asset_id, COUNT(DISTINCT crew_code) AS crew_count
+    FROM (
+      SELECT c.* FROM CustodyEvents c
+      JOIN (SELECT asset_id, MAX(occurred_at) latest_at FROM CustodyEvents GROUP BY asset_id) latest
+        ON latest.asset_id=c.asset_id AND latest.latest_at=c.occurred_at
+      WHERE c.state IN ('Issued','Return Expected','Return Overdue','Lost/Unaccounted for')
+    ) open_events
+    WHERE crew_code IS NOT NULL AND crew_code <> ''
+    GROUP BY asset_id HAVING COUNT(DISTINCT crew_code) > 1
+    ORDER BY crew_count DESC, asset_id`).execute();
+  return {
+    duplicateDeviceTypes: duplicateByCrew.rows || [],
+    multipleCrewAssignments: duplicateByAsset.rows || []
+  };
 }
