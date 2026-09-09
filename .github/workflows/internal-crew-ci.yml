@@ -30,3 +30,65 @@ jobs:
         run: npm --prefix crew-static run build
       - name: Build device usage reconciliation UI
         run: npm --prefix crew-usage-static run build
+
+  deploy-work-sandbox:
+    needs: validate-crew
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: retailinmotion-sandbox1
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      FORGE_SITE: retailinmotion-sandbox1.atlassian.net
+      FORGE_ENVIRONMENT: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts
+      - name: Install all Custom UI dependencies
+        run: |
+          npm --prefix static install
+          npm --prefix field-static install
+          npm --prefix panel-static install
+          npm --prefix split-static install
+          npm --prefix portal-static install
+          npm --prefix reports-static install
+          npm --prefix crew-static install
+          npm --prefix crew-usage-static install
+      - name: Prepare generated Asset Manager source
+        run: |
+          node scripts/prepare-device-fault.mjs
+          node static/scripts/prepare-entry.mjs
+      - name: Build all Custom UI resources
+        run: |
+          npm --prefix static run build
+          npm --prefix field-static run build
+          npm --prefix panel-static run build
+          npm --prefix split-static run build
+          npm --prefix portal-static run build
+          npm --prefix reports-static run build
+          npm --prefix crew-static run build
+          npm --prefix crew-usage-static run build
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli@latest
+      - name: Disable Forge usage analytics
+        run: forge settings set usage-analytics false
+      - name: Forge lint
+        run: forge lint
+      - name: Deploy internal build to Forge development
+        run: forge deploy --environment "$FORGE_ENVIRONMENT" --approve MAJOR_VERSION_RULE --non-interactive
+      - name: Install or upgrade on Retail in Motion sandbox
+        shell: bash
+        run: |
+          if forge install --upgrade all --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive; then
+            echo "Internal sandbox installation upgraded successfully."
+          else
+            echo "No upgradeable installation found; attempting first install."
+            forge install --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive
+          fi
