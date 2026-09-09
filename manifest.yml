@@ -19,6 +19,12 @@ modules:
         function: reports
       title: Asset Manager Reports
       layout: blank
+    - key: nuvriqo-internal-crew-tracking
+      resource: crew-tracking
+      resolver:
+        function: crew-tracking
+      title: Crew Tracking
+      layout: blank
 
   jira:issuePanel:
     - key: nuvriqo-asset-issue-panel
@@ -91,6 +97,8 @@ modules:
       handler: portal-assets.handler
     - key: reports
       handler: reports.handler
+    - key: crew-tracking
+      handler: crew.handler
 
 resources:
   - key: main
@@ -105,6 +113,8 @@ resources:
     path: portal-static/dist
   - key: reports
     path: reports-static/dist
+  - key: crew-tracking
+    path: crew-static/dist
 
 permissions:
   scopes:
