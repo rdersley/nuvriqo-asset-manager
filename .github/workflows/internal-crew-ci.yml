@@ -1,0 +1,26 @@
+name: Internal Crew Tracking CI
+
+on:
+  push:
+    branches: [internal-crew-tracking]
+  workflow_dispatch:
+
+jobs:
+  validate-crew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts
+      - name: Check crew resolver syntax
+        run: node --check src/crew.js
+      - name: Install crew UI dependencies
+        run: npm --prefix crew-static install
+      - name: Build crew tracking UI
+        run: npm --prefix crew-static run build
