@@ -25,8 +25,8 @@ const replacements = [
     "function relatedTicketFields(issue,faultFieldId=null){return faultFieldId?ticketFields(issue,'related',faultFieldId):ticketFields(issue,'related');}\nfunction fieldValues(value) { if(value==null)return[];"
   ],
   [
-    "const fields=[field.id,settings.jiraRelatedAssetField?.id,settings.jiraLocationField?.id,settings.jiraTypeField?.id,settings.jiraCrewCodeField?.id,'summary'",
-    "const fields=[field.id,settings.jiraRelatedAssetField?.id,settings.jiraLocationField?.id,settings.jiraTypeField?.id,settings.jiraCrewCodeField?.id,settings.jiraFaultField?.id,'summary'"
+    "fields:[field.id,settings.jiraRelatedAssetField?.id,settings.jiraLocationField?.id,settings.jiraTypeField?.id,settings.jiraCrewCodeField?.id,'summary'",
+    "fields:[field.id,settings.jiraRelatedAssetField?.id,settings.jiraLocationField?.id,settings.jiraTypeField?.id,settings.jiraCrewCodeField?.id,settings.jiraFaultField?.id,'summary'"
   ],
   [
     "matched.set(issue.key,ticketFields(issue,'primary'));else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,targetIdentifier))matched.set(issue.key,ticketFields(issue,'related'));",
