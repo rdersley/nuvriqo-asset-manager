@@ -13,12 +13,6 @@ modules:
           route: reports
 
   jira:adminPage:
-    - key: nuvriqo-asset-manager-reports
-      resource: reports
-      resolver:
-        function: reports
-      title: Asset Manager Reports
-      layout: blank
     - key: nuvriqo-internal-asset-operations
       resource: crew-tracking
       resolver:
