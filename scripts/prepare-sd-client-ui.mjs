@@ -15,13 +15,6 @@ replaceOnce(
   "const emptyAsset = { id: '', name: '', client: '', type: 'Laptop'"
 );
 
-replaceOnce(
-  'client edit field',
-  "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Asset type>",
-  "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Client<input value={draft.client||''} onChange={(e) => update('client', e.target.value)} placeholder=\"Client / organisation\" /></label><label>Asset type>"
-);
-
-// The source uses a select tag immediately after the Asset type label.
 if (!src.includes('placeholder="Client / organisation"')) {
   const from = "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Asset type<select";
   const to = "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Client<input value={draft.client||''} onChange={(e) => update('client', e.target.value)} placeholder=\"Client / organisation\" /></label><label>Asset type<select";
@@ -47,9 +40,6 @@ replaceOnce(
   "['Client', asset.client || '—'], ['Assignment reference', asset.crewCode || '—']"
 );
 
-// Production copies can require several thousand enhanced-search pages. The
-// resolver is resumable, so allow the UI to keep invoking it rather than
-// stopping after 2,000 pages and showing a false failure banner.
 src = src.replaceAll('guard<2000', 'guard<10000');
 
 fs.writeFileSync(path, src);
