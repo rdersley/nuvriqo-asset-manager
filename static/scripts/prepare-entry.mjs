@@ -52,4 +52,14 @@ const old="useEffect(()=>{view.getContext().then(setContext);},[]); useEffect(()
 const replacement="useEffect(()=>{view.getContext().then(setContext);},[]); useEffect(()=>{let unlisten; view.createHistory().then((history)=>{const apply=(location)=>{const route=(location?.pathname||'').replace(/^\\/+|\\/+$/g,''); if(route==='reports')setMode('reports'); else if(route==='overview'||route==='')setMode('overview');}; apply(history.location); unlisten=history.listen((location)=>apply(location));}).catch(()=>{}); return()=>unlisten?.();},[]); useEffect(()=>{if(context?.extension?.type!=='jira:issuePanel')load().catch(e=>setMessage(e.message));},[query,status,type,location,context]);";
 if(src.includes(old)) src=src.replace(old,replacement);
 else if(!src.includes('view.createHistory().then')) throw new Error('Could not locate Asset Manager routing hook.');
+
+// A production-sized Jira site can need far more than 50 Jira pages. Keep the
+// resumable scan moving and show ticket-scan progress instead of the misleading
+// processed/discovered ratio, which can stop changing when later pages contain
+// Device IDs already seen earlier in the run.
+const oldSync="async function syncAll({restart=false,setStage}={}){let sync=await invoke('syncAssetsFromJira',{restart});let guard=0;while(sync&&!sync.complete&&guard<50){const stage=`Syncing Jira devices… ${sync.processed||0} / ${sync.discovered||0}`;setMessage(stage);setStage?.(stage);sync=await invoke('syncAssetsFromJira',{restart:false});guard+=1;}if(sync&&!sync.complete)throw new Error('Jira sync did not complete. Please try again.');return sync;}";
+const newSync="async function syncAll({restart=false,setStage}={}){let sync=await invoke('syncAssetsFromJira',{restart});let guard=0;while(sync&&!sync.complete&&guard<2000){const stage=`Syncing Jira devices… ${sync.issuesScanned||0} Jira tickets scanned · ${sync.discovered||0} unique devices found`;setMessage(stage);setStage?.(stage);sync=await invoke('syncAssetsFromJira',{restart:false});guard+=1;}if(sync&&!sync.complete)throw new Error(`Jira sync paused after ${sync.issuesScanned||0} tickets. Run the scan again to continue from the saved position.`);return sync;}";
+if(src.includes(oldSync)) src=src.replace(oldSync,newSync);
+else if(!src.includes('guard<2000')) throw new Error('Could not update Jira scan continuation guard.');
+
 fs.writeFileSync(path,src);
