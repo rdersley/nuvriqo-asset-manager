@@ -5,6 +5,10 @@ let src = fs.readFileSync(path, 'utf8');
 
 const replacements = [
   [
+    "const LINK_PREFIX = 'issue-link:';\nconst HISTORY_PREFIX = 'asset-history:';",
+    "const LINK_PREFIX = 'issue-link:';\nconst ASSET_TICKET_PREFIX = 'asset-ticket:';\nconst HISTORY_PREFIX = 'asset-history:';"
+  ],
+  [
     "const HISTORY_PREFIX = 'asset-history:';\nconst SETTINGS_KEY = 'settings:asset-manager';",
     "const HISTORY_PREFIX = 'asset-history:';\nconst FAULT_HISTORY_PREFIX = 'fault-history:';\nconst SETTINGS_KEY = 'settings:asset-manager';"
   ],
@@ -33,8 +37,24 @@ const replacements = [
     "fields:[field.id,settings.jiraRelatedAssetField?.id,settings.jiraLocationField?.id,settings.jiraTypeField?.id,settings.jiraCrewCodeField?.id,settings.jiraFaultField?.id,'summary'"
   ],
   [
+    "async function findAssetForJiraIdentifier(fieldId,identifier){const deterministicId=makeJiraAssetId(fieldId,identifier);let asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(asset)return asset;const indexed=await kvs.get(nameIndexKey(identifier));if(indexed?.assetId)asset=await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);return asset||null;}",
+    "async function findAssetForJiraIdentifier(fieldId,identifier){const deterministicId=makeJiraAssetId(fieldId,identifier);let asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(asset)return asset;const indexed=await kvs.get(nameIndexKey(identifier));if(indexed?.assetId)asset=await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);return asset||null;}\nasync function recordScannedTicketsForAsset(asset,issues,field,settings){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});}}"
+  ],
+  [
+    "    let asset=await findAssetForJiraIdentifier(field.id,identifier);\n    if(asset?.jiraSyncRunId===progress.runId)continue;\n    batchDiscovered+=1;",
+    "    let asset=await findAssetForJiraIdentifier(field.id,identifier);\n    const alreadyProcessed=asset?.jiraSyncRunId===progress.runId;\n    if(!alreadyProcessed)batchDiscovered+=1;"
+  ],
+  [
+    "    if(asset){asset=await saveOneAsset({...asset,...base,...(location?{location}:{}),...(type?{type}:{}),...(crewCode?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}\n  }",
+    "    if(!alreadyProcessed){if(asset){asset=await saveOneAsset({...asset,...base,...(location?{location}:{}),...(type?{type}:{}),...(crewCode?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}}\n    await recordScannedTicketsForAsset(asset,issues,field,settings);\n  }"
+  ],
+  [
     "matched.set(issue.key,ticketFields(issue,'primary'));else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,targetIdentifier))matched.set(issue.key,ticketFields(issue,'related'));",
     "matched.set(issue.key,ticketFields(issue,'primary',settings.jiraFaultField?.id));else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,targetIdentifier))matched.set(issue.key,relatedTicketFields(issue,settings.jiraFaultField?.id));"
+  ],
+  [
+    "resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId).map(l=>l.issueKey).filter(Boolean);try{return await searchAssetTickets(assetId,legacyKeys);}catch{return legacyKeys.map(key=>({key,relation:'linked'}));}});",
+    "resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const recorded=await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`);const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId).map(l=>l.issueKey).filter(Boolean);if(recorded.length){const byKey=new Map();for(const ticket of recorded){const current=byKey.get(ticket.key);if(!current||ticket.relation==='primary')byKey.set(ticket.key,ticket);}for(const key of legacyKeys)if(!byKey.has(key))byKey.set(key,{key,relation:'linked'});return [...byKey.values()].sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));}try{return await searchAssetTickets(assetId,legacyKeys);}catch{return legacyKeys.map(key=>({key,relation:'linked'}));}});"
   ],
   [
     "const ticket=ticketFields(issue);for(const identifier",
