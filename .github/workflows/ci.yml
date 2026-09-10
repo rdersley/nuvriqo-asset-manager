@@ -53,6 +53,9 @@ jobs:
       - name: Prepare Device Fault backend mapping
         run: node scripts/prepare-device-fault.mjs
 
+      - name: Prepare SD Client asset mapping
+        run: node scripts/prepare-sd-client.mjs
+
       - name: Check resolver syntax
         run: |
           node --check src/index.js
@@ -169,6 +172,9 @@ jobs:
 
       - name: Prepare Device Fault backend mapping
         run: node scripts/prepare-device-fault.mjs
+
+      - name: Prepare SD Client asset mapping
+        run: node scripts/prepare-sd-client.mjs
 
       - name: Build Asset Manager UI
         run: npm --prefix static run build
