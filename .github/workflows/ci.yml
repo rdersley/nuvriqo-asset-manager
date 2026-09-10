@@ -35,6 +35,8 @@ jobs:
         run: npm --prefix portal-static install
       - name: Install Reports UI dependencies
         run: npm --prefix reports-static install
+      - name: Install Internal Asset Operations UI dependencies
+        run: npm --prefix crew-static install
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
       - name: Disable Forge usage analytics
@@ -43,6 +45,8 @@ jobs:
         run: node scripts/prepare-device-fault.mjs
       - name: Prepare SD Client asset mapping
         run: node scripts/prepare-sd-client.mjs
+      - name: Tighten Jira Device ID validation
+        run: node scripts/prepare-device-id-validation.mjs
       - name: Prepare bulk Jira import cleanup
         run: node scripts/prepare-bulk-cleanup.mjs
       - name: Check resolver syntax
@@ -53,6 +57,7 @@ jobs:
           node --check src/device-split.js
           node --check src/portal-assets.js
           node --check src/reports.js
+          node --check src/crew.js
       - name: Run import validation tests
         run: npm --prefix static test
       - name: Run QA regression simulations
@@ -69,6 +74,8 @@ jobs:
         run: npm --prefix portal-static run build
       - name: Build Reports UI
         run: npm --prefix reports-static run build
+      - name: Build Internal Asset Operations UI
+        run: npm --prefix crew-static run build
       - name: Forge lint
         shell: bash
         run: |
@@ -137,10 +144,14 @@ jobs:
         run: npm --prefix portal-static install
       - name: Install Reports UI dependencies
         run: npm --prefix reports-static install
+      - name: Install Internal Asset Operations UI dependencies
+        run: npm --prefix crew-static install
       - name: Prepare Device Fault backend mapping
         run: node scripts/prepare-device-fault.mjs
       - name: Prepare SD Client asset mapping
         run: node scripts/prepare-sd-client.mjs
+      - name: Tighten Jira Device ID validation
+        run: node scripts/prepare-device-id-validation.mjs
       - name: Prepare bulk Jira import cleanup
         run: node scripts/prepare-bulk-cleanup.mjs
       - name: Build Asset Manager UI
@@ -155,6 +166,8 @@ jobs:
         run: npm --prefix portal-static run build
       - name: Build Reports UI
         run: npm --prefix reports-static run build
+      - name: Build Internal Asset Operations UI
+        run: npm --prefix crew-static run build
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
       - name: Disable Forge usage analytics
