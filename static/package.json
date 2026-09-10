@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/prepare-entry.mjs && node ../scripts/prepare-sd-client-ui.mjs && node scripts/prepare-bulk-cleanup.mjs && vite build",
+    "build": "node scripts/prepare-entry.mjs && node ../scripts/prepare-sd-client-ui.mjs && node scripts/prepare-bulk-cleanup.mjs && node scripts/prepare-nonblocking-load.mjs && vite build",
     "test": "node --test src/importUtils.test.js"
   },
   "dependencies": {
