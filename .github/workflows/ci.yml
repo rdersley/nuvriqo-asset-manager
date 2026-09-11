@@ -49,6 +49,8 @@ jobs:
         run: node scripts/prepare-device-id-validation.mjs
       - name: Prepare bulk Jira import cleanup
         run: node scripts/prepare-bulk-cleanup.mjs
+      - name: Apply scale safety guards
+        run: node scripts/prepare-scale-guards.mjs
       - name: Check resolver syntax
         run: |
           node --check src/index.js
@@ -154,6 +156,8 @@ jobs:
         run: node scripts/prepare-device-id-validation.mjs
       - name: Prepare bulk Jira import cleanup
         run: node scripts/prepare-bulk-cleanup.mjs
+      - name: Apply scale safety guards
+        run: node scripts/prepare-scale-guards.mjs
       - name: Build Asset Manager UI
         run: npm --prefix static run build
       - name: Build Device field UI
