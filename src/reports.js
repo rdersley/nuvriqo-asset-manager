@@ -5,21 +5,25 @@ import { kvs, WhereConditions } from '@forge/kvs';
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
 const SETTINGS_KEY = 'settings:asset-manager';
+const REPORT_ASSET_LIMIT = 500;
+const REPORT_ISSUE_LIMIT = 500;
 const clean = (v) => typeof v === 'string' ? v.trim() : v;
 const normalise = (v) => String(clean(v) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
 const safeArray = (v) => Array.isArray(v) ? v : [];
 
-async function allAssets() {
+async function reportAssets() {
   const values = [];
   let cursor;
+  let truncated = false;
   do {
     let q = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
     if (cursor) q = q.cursor(cursor);
     const page = await q.getMany();
     values.push(...page.results.map((r) => r.value));
     cursor = page.nextCursor;
+    if (values.length >= REPORT_ASSET_LIMIT && cursor) { truncated = true; break; }
   } while (cursor);
-  return values;
+  return { assets: values.slice(0, REPORT_ASSET_LIMIT), truncated };
 }
 
 function fieldValues(value) {
@@ -45,13 +49,14 @@ function organizationField(fields) {
 
 async function issueData(settings) {
   const assetField = settings.jiraAssetField?.id;
-  if (!assetField) return { issues: [], organizationField: null };
+  if (!assetField) return { issues: [], organizationField: null, truncated: false };
   const fields = await jiraFields();
   const orgField = organizationField(fields);
   const numeric = String(assetField).replace('customfield_', '');
   const wanted = [assetField, orgField?.id, 'summary', 'status', 'created', 'resolutiondate'].filter(Boolean);
   const issues = [];
   let nextPageToken;
+  let truncated = false;
   do {
     const body = { jql: `cf[${numeric}] is not EMPTY ORDER BY created DESC`, fields: wanted, maxResults: 100 };
     if (nextPageToken) body.nextPageToken = nextPageToken;
@@ -60,8 +65,9 @@ async function issueData(settings) {
     const data = await r.json();
     issues.push(...safeArray(data.issues));
     nextPageToken = data.nextPageToken || null;
+    if (issues.length >= REPORT_ISSUE_LIMIT && nextPageToken) { truncated = true; break; }
   } while (nextPageToken);
-  return { issues, organizationField: orgField };
+  return { issues: issues.slice(0, REPORT_ISSUE_LIMIT), organizationField: orgField, truncated };
 }
 
 function groupCount(items, getter, fallback = 'Unspecified') {
@@ -74,9 +80,9 @@ function groupCount(items, getter, fallback = 'Unspecified') {
 }
 
 resolver.define('getReportingData', async () => {
-  const assets = await allAssets();
+  const { assets, truncated: assetsTruncated } = await reportAssets();
   const settings = { ...((await kvs.get(SETTINGS_KEY)) || {}) };
-  const { issues, organizationField: orgField } = await issueData(settings);
+  const { issues, organizationField: orgField, truncated: issuesTruncated } = await issueData(settings);
   const byIdentifier = new Map();
   for (const asset of assets) byIdentifier.set(normalise(asset.jiraIdentifier || asset.name), asset);
 
@@ -133,6 +139,8 @@ resolver.define('getReportingData', async () => {
 
   return {
     generatedAt: new Date().toISOString(),
+    partial: assetsTruncated || issuesTruncated,
+    limits: { assets: REPORT_ASSET_LIMIT, issues: REPORT_ISSUE_LIMIT, assetsTruncated, issuesTruncated },
     summary: { totalAssets: rows.length, inRepair, unassigned, openFaults, expiredWarranty: expired, expiringWarranty: expiringSoon, qualityIssues: rows.filter((r) => r.qualityIssues > 0).length },
     byType: groupCount(rows, (r) => r.type),
     byStatus: groupCount(rows, (r) => r.status),
