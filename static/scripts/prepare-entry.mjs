@@ -30,13 +30,15 @@ const ledgerCard="<div className=\"card fault-card\"><div className=\"section-he
 if(src.includes(activityCard)) src=src.replace(activityCard,ledgerCard);
 else if(!src.includes('Historical fault ledger')) throw new Error('Could not locate activity card for fault ledger.');
 
-// Keep runtime navigation simple and stable. The base Asset Manager already owns
-// its sidebar and screen switching; do not rewrite full-page renders or install a
-// second history/navigation layer during the build.
-
 const oldSync="async function syncAll({restart=false,setStage}={}){let sync=await invoke('syncAssetsFromJira',{restart});let guard=0;while(sync&&!sync.complete&&guard<50){const stage=`Syncing Jira devices… ${sync.processed||0} / ${sync.discovered||0}`;setMessage(stage);setStage?.(stage);sync=await invoke('syncAssetsFromJira',{restart:false});guard+=1;}if(sync&&!sync.complete)throw new Error('Jira sync did not complete. Please try again.');return sync;}";
 const newSync="async function syncAll({restart=false,setStage}={}){let sync=await invoke('syncAssetsFromJira',{restart});let guard=0;while(sync&&!sync.complete&&guard<2000){const stage=`Syncing Jira devices… ${sync.issuesScanned||0} Jira tickets scanned · ${sync.discovered||0} unique devices found`;setMessage(stage);setStage?.(stage);sync=await invoke('syncAssetsFromJira',{restart:false});guard+=1;}if(sync&&!sync.complete)throw new Error(`Jira sync paused after ${sync.issuesScanned||0} tickets. Run the scan again to continue from the saved position.`);return sync;}";
 if(src.includes(oldSync)) src=src.replace(oldSync,newSync);
 else if(!src.includes('guard<2000')) throw new Error('Could not update Jira scan continuation guard.');
+
+const rootCall="createRoot(document.getElementById('root')).render(<App/>);";
+if(src.includes(rootCall)&&!src.includes('class AssetManagerErrorBoundary')){
+  const boundary=`class AssetManagerErrorBoundary extends React.Component {\n  constructor(props){super(props);this.state={error:null};}\n  static getDerivedStateFromError(error){return{error};}\n  componentDidCatch(error,info){console.error('Asset Manager UI error',error,info);}\n  render(){if(this.state.error)return <div style={{padding:'24px',fontFamily:'Arial,sans-serif'}}><h2>Asset Manager could not load</h2><p>{this.state.error?.message||'Unexpected UI error.'}</p><p>Please refresh the page. If this remains, send this message to support.</p></div>;return this.props.children;}\n}\n${rootCall.replace('<App/>','<AssetManagerErrorBoundary><App/></AssetManagerErrorBoundary>')}`;
+  src=src.replace(rootCall,boundary);
+}
 
 fs.writeFileSync(path,src);
