@@ -8,7 +8,6 @@ const mappingReplacement="{fieldSelect('Jira related asset field','jiraRelatedAs
 if(src.includes(mappingNeedle)) src=src.replace(mappingNeedle,mappingReplacement);
 else if(!src.includes("'jiraFaultField'")) throw new Error('Could not locate Jira field mappings.');
 
-// Marketplace-facing terminology must stay customer-neutral.
 src=src
   .replaceAll('Jira location / base field','Jira location field')
   .replaceAll('asset location/base','asset location')
@@ -31,32 +30,10 @@ const ledgerCard="<div className=\"card fault-card\"><div className=\"section-he
 if(src.includes(activityCard)) src=src.replace(activityCard,ledgerCard);
 else if(!src.includes('Historical fault ledger')) throw new Error('Could not locate activity card for fault ledger.');
 
-// Keep the app navigation visible on every full-page screen, including edit,
-// configuration, reports and asset detail views.
-const navNeedle="function NavButton({ active, icon, children, onClick }) { return <button className={`nv-nav-item ${active ? 'active' : ''}`} onClick={onClick}><span className=\"nv-nav-icon\">{icon}</span><span>{children}</span></button>; }";
-const navHelper=`${navNeedle}\nfunction PersistentNav({ mode, onNavigate, onImport }) { return <aside className=\"nv-sidebar\"><div className=\"nv-brand\"><div className=\"nv-logo\">N</div><div><strong>Nuvriqo</strong><small>Asset Manager</small></div></div><nav><NavButton active={mode==='overview'} icon=\"⌂\" onClick={()=>onNavigate('overview')}>Overview</NavButton><NavButton active={mode==='assets'||mode==='detail'||mode==='form'} icon=\"▣\" onClick={()=>onNavigate('assets')}>Assets</NavButton><NavButton icon=\"⇧\" onClick={onImport}>Imports</NavButton><NavButton active={mode==='reports'} icon=\"▥\" onClick={()=>onNavigate('reports')}>Reports</NavButton><NavButton active={mode==='settings'} icon=\"⚙\" onClick={()=>onNavigate('settings')}>Configuration</NavButton></nav><div className=\"nv-sidebar-bottom\"><span>Help & Support</span><span>Documentation</span><span className=\"nv-version\">Nuvriqo · UI v1</span></div></aside>; }`;
-if(src.includes(navNeedle)&&!src.includes('function PersistentNav(')) src=src.replace(navNeedle,navHelper);
-const wrapScreen=(modeName)=>{
-  const re=new RegExp(`if\\(mode==='${modeName}'([^\\n]*?)\\)return <main>([\\s\\S]*?)<\\/main>;`);
-  const match=src.match(re);
-  if(!match) return;
-  const condition=match[1]||'';
-  const inner=match[2];
-  const replacement=`if(mode==='${modeName}'${condition})return <div className=\"nv-shell\"><PersistentNav mode={mode} onNavigate={(next)=>{setMode(next);if(next!=='detail')setSelected(null);}} onImport={()=>{setMode('assets');setShowImport(true);}}/><main className=\"nv-main\">${inner}</main></div>;`;
-  src=src.replace(match[0],replacement);
-};
-['form','settings','reports','detail'].forEach(wrapScreen);
-if(!src.includes('<PersistentNav mode={mode}')) throw new Error('Could not add persistent navigation to full-page screens.');
+// Keep runtime navigation simple and stable. The base Asset Manager already owns
+// its sidebar and screen switching; do not rewrite full-page renders or install a
+// second history/navigation layer during the build.
 
-const old="useEffect(()=>{view.getContext().then(setContext);},[]); useEffect(()=>{if(context?.extension?.type!=='jira:issuePanel')load().catch(e=>setMessage(e.message));},[query,status,type,location,context]);";
-const replacement="useEffect(()=>{view.getContext().then(setContext);},[]); useEffect(()=>{let unlisten; view.createHistory().then((history)=>{const apply=(location)=>{const route=(location?.pathname||'').replace(/^\\/+|\\/+$/g,''); if(route==='reports')setMode('reports'); else if(route==='overview'||route==='')setMode('overview');}; apply(history.location); unlisten=history.listen((location)=>apply(location));}).catch(()=>{}); return()=>unlisten?.();},[]); useEffect(()=>{if(context?.extension?.type!=='jira:issuePanel')load().catch(e=>setMessage(e.message));},[query,status,type,location,context]);";
-if(src.includes(old)) src=src.replace(old,replacement);
-else if(!src.includes('view.createHistory().then')) throw new Error('Could not locate Asset Manager routing hook.');
-
-// A production-sized Jira site can need far more than 50 Jira pages. Keep the
-// resumable scan moving and show ticket-scan progress instead of the misleading
-// processed/discovered ratio, which can stop changing when later pages contain
-// Device IDs already seen earlier in the run.
 const oldSync="async function syncAll({restart=false,setStage}={}){let sync=await invoke('syncAssetsFromJira',{restart});let guard=0;while(sync&&!sync.complete&&guard<50){const stage=`Syncing Jira devices… ${sync.processed||0} / ${sync.discovered||0}`;setMessage(stage);setStage?.(stage);sync=await invoke('syncAssetsFromJira',{restart:false});guard+=1;}if(sync&&!sync.complete)throw new Error('Jira sync did not complete. Please try again.');return sync;}";
 const newSync="async function syncAll({restart=false,setStage}={}){let sync=await invoke('syncAssetsFromJira',{restart});let guard=0;while(sync&&!sync.complete&&guard<2000){const stage=`Syncing Jira devices… ${sync.issuesScanned||0} Jira tickets scanned · ${sync.discovered||0} unique devices found`;setMessage(stage);setStage?.(stage);sync=await invoke('syncAssetsFromJira',{restart:false});guard+=1;}if(sync&&!sync.complete)throw new Error(`Jira sync paused after ${sync.issuesScanned||0} tickets. Run the scan again to continue from the saved position.`);return sync;}";
 if(src.includes(oldSync)) src=src.replace(oldSync,newSync);
