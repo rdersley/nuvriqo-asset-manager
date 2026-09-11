@@ -14,8 +14,6 @@ function replaceRequired(src, from, to, label) {
   return src.replace(from, to);
 }
 
-// Core resolver: no generic KVS helper may read an unlimited prefix, and legacy
-// full Jira scans are capped. Resumable sync uses its own page token and is not changed.
 edit('src/index.js', (input) => {
   let src = input;
   src = replaceRequired(
@@ -30,7 +28,6 @@ edit('src/index.js', (input) => {
     "async function searchIssuesWithConfiguredAssetField(){let page=await searchIssuePageWithConfiguredAssetField();if(!page.field)return{field:null,issues:[],settings:page.settings};const issues=[...page.issues];let nextPageToken=page.nextPageToken,guard=0;while(nextPageToken&&guard<5){page=await searchIssuePageWithConfiguredAssetField({nextPageToken});issues.push(...page.issues);nextPageToken=page.nextPageToken;guard+=1;}return{field:page.field,issues,settings:page.settings,truncated:Boolean(nextPageToken)};}",
     'bounded legacy Jira issue lookup'
   );
-  // Report card on the main page is deliberately a snapshot, not a fleet-wide blocking scan.
   src = src.replace("const assets=await queryAllByPrefix(ASSET_PREFIX);if(!assets.length)return[];const rows=[];", "const assets=await queryAllByPrefix(ASSET_PREFIX,100);if(!assets.length)return[];const rows=[];");
   return src;
 });
@@ -87,5 +84,15 @@ edit('src/ticket-sync.js', (input) => {
   src = src.replace('  } while (cursor);\n\n  return results', '  } while (cursor && pages < 5);\n\n  return results');
   return src;
 });
+
+// Keep explicit Jira scans resumable instead of making one click issue thousands
+// of sequential Forge invocations. Progress is persisted server-side, so another
+// click continues from the saved token.
+edit('static/scripts/prepare-entry.mjs', (input) => input.replaceAll('guard<2000', 'guard<20'));
+edit('scripts/prepare-sd-client-ui.mjs', (input) => input.replace("src = src.replaceAll('guard<2000', 'guard<10000');", "src = src.replaceAll('guard<2000', 'guard<20');"));
+
+// Legacy report workspace is not currently the manifest resolver, but keep it safe
+// so it cannot reintroduce a huge Jira scan if re-enabled later.
+edit('static/src/reports.jsx', (input) => input.replaceAll('guard<250', 'guard<5'));
 
 console.log('Scale safety guards prepared.');
