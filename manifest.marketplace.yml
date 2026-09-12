@@ -1,0 +1,110 @@
+modules:
+  jira:globalPage:
+    - key: nuvriqo-asset-manager
+      resource: main
+      resolver:
+        function: resolver
+      title: Asset Manager
+      layout: blank
+      pages:
+        - title: Overview
+          route: overview
+        - title: Reports
+          route: reports
+
+  jira:issuePanel:
+    - key: nuvriqo-asset-issue-panel
+      resource: issue-panel
+      resolver:
+        function: issue-panel
+      title: Device / Asset
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+
+  jira:issueAction:
+    - key: nuvriqo-split-devices
+      resource: split-action
+      resolver:
+        function: device-split
+      title: Split Devices
+      viewportSize: medium
+
+  jira:customField:
+    - key: nuvriqo-device-field
+      name: Device
+      description: Select a device from Nuvriqo Asset Manager.
+      type: object
+      resolver:
+        function: ticket-sync
+      schema:
+        type: object
+        properties:
+          id:
+            type: string
+            searchAlias: AssetId
+          name:
+            type: string
+            searchAlias: DeviceName
+        required:
+          - id
+          - name
+        additionalProperties: false
+      view:
+        formatter:
+          expression: "value != null ? value.name : ''"
+          export: true
+      edit:
+        resource: device-field
+        experience:
+          - issue-view
+          - issue-create
+          - issue-transition
+
+  jiraServiceManagement:portalUserMenuAction:
+    - key: nuvriqo-my-organisation-devices
+      resource: portal-assets
+      resolver:
+        function: portal-assets
+      title: My organisation's devices
+      viewportSize: large
+      unlicensedAccess:
+        - customer
+        - unlicensed
+
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: ticket-sync
+      handler: ticket-sync.handler
+    - key: issue-panel
+      handler: issue-panel.handler
+    - key: device-split
+      handler: device-split.handler
+    - key: portal-assets
+      handler: portal-assets.handler
+
+resources:
+  - key: main
+    path: static/dist
+  - key: issue-panel
+    path: panel-static/dist
+  - key: split-action
+    path: split-static/dist
+  - key: device-field
+    path: field-static/dist
+  - key: portal-assets
+    path: portal-static/dist
+
+permissions:
+  scopes:
+    - storage:app
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+    - read:user:jira
+    - read:avatar:jira
+    - read:organization:jira-service-management
+
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/ffd70422-97fd-49bb-83ed-0dc607590642
