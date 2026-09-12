@@ -49,6 +49,8 @@ jobs:
         run: node scripts/prepare-device-id-validation.mjs
       - name: Prepare bulk Jira import cleanup
         run: node scripts/prepare-bulk-cleanup.mjs
+      - name: Prepare internal crew-to-JSM customer linking
+        run: node scripts/prepare-crew-customer-link.mjs
       - name: Apply scale safety guards
         run: node scripts/prepare-scale-guards.mjs
       - name: Verify Marketplace-safe manifest
@@ -158,6 +160,8 @@ jobs:
         run: node scripts/prepare-device-id-validation.mjs
       - name: Prepare bulk Jira import cleanup
         run: node scripts/prepare-bulk-cleanup.mjs
+      - name: Prepare internal crew-to-JSM customer linking
+        run: node scripts/prepare-crew-customer-link.mjs
       - name: Apply scale safety guards
         run: node scripts/prepare-scale-guards.mjs
       - name: Verify Marketplace-safe manifest
