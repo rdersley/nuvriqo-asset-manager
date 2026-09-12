@@ -1,0 +1,57 @@
+name: Asset Manager Marketplace Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_release:
+        description: 'Type RELEASE only after RELEASE_CHECKLIST.md is fully green'
+        required: true
+        type: string
+
+jobs:
+  release:
+    if: github.event.inputs.confirm_release == 'RELEASE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: marketplace-production
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      FORGE_ENVIRONMENT: production
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts
+      - name: Install public UI dependencies
+        run: |
+          npm --prefix static install
+          npm --prefix field-static install
+          npm --prefix panel-static install
+          npm --prefix split-static install
+          npm --prefix portal-static install
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli@latest
+      - name: Disable Forge usage analytics
+        run: forge settings set usage-analytics false
+      - name: Prepare public backend mappings and scale guards
+        run: |
+          node scripts/prepare-device-fault.mjs
+          node scripts/prepare-sd-client.mjs
+          node scripts/prepare-device-id-validation.mjs
+          node scripts/prepare-bulk-cleanup.mjs
+          node scripts/prepare-scale-guards.mjs
+      - name: Verify Marketplace release manifest
+        run: npm run verify:marketplace
+      - name: Build Marketplace UIs
+        run: npm run build:marketplace
+      - name: Switch to Marketplace-safe manifest
+        run: cp manifest.marketplace.yml manifest.yml
+      - name: Forge lint Marketplace descriptor
+        run: forge lint
+      - name: Deploy exact release candidate to Forge production
+        run: forge deploy --environment "$FORGE_ENVIRONMENT" --approve MAJOR_VERSION_RULE --non-interactive
