@@ -9,3 +9,5 @@ if (!src.includes(to)) {
   src = src.replace(from, to);
 }
 fs.writeFileSync(path, src);
+
+await import('./prepare-large-asset-pagination.mjs');
