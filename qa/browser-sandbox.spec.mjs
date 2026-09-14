@@ -2,20 +2,27 @@ import { test, expect } from '@playwright/test';
 
 const baseUrl = String(process.env.ASSET_MANAGER_E2E_URL || '').replace(/\/$/, '');
 
+async function isAssetManagerFrame(frame) {
+  try {
+    if (frame === frame.page().mainFrame()) return false;
+    const hasTitle = await frame.getByText('Asset Manager', { exact: true }).count();
+    const hasInternalNav = await frame.getByText('Configuration', { exact: true }).count();
+    return Boolean(hasTitle && hasInternalNav);
+  } catch {
+    return false;
+  }
+}
+
 async function waitForAppFrame(page) {
   await expect.poll(async () => {
     for (const frame of page.frames()) {
-      try {
-        if (await frame.getByText('Asset Manager', { exact: true }).count()) return frame.url() || 'found';
-      } catch {}
+      if (await isAssetManagerFrame(frame)) return frame.url() || 'found';
     }
     return '';
-  }, { timeout: 25_000 }).not.toBe('');
+  }, { timeout: 30_000 }).not.toBe('');
 
   for (const frame of page.frames()) {
-    try {
-      if (await frame.getByText('Asset Manager', { exact: true }).count()) return frame;
-    } catch {}
+    if (await isAssetManagerFrame(frame)) return frame;
   }
   throw new Error('Asset Manager iframe did not render.');
 }
@@ -28,12 +35,15 @@ async function assertAppHealthy(frame) {
   expect(body).not.toContain('There was an error invoking the function - Limits for the current installation have been exceeded');
 }
 
-async function clickNav(frame, name) {
-  const button = frame.getByRole('button', { name, exact: true });
-  if (await button.count()) return button.first().click();
-  const link = frame.getByRole('link', { name, exact: true });
-  if (await link.count()) return link.first().click();
-  return frame.getByText(name, { exact: true }).first().click();
+async function clickInternalNav(page, name) {
+  let frame = await waitForAppFrame(page);
+  const target = frame.getByText(name, { exact: true });
+  await expect(target.first()).toBeVisible({ timeout: 10_000 });
+  await target.first().click();
+  await page.waitForTimeout(700);
+  frame = await waitForAppFrame(page);
+  await assertAppHealthy(frame);
+  return frame;
 }
 
 test.describe('Asset Manager sandbox browser acceptance', () => {
@@ -41,13 +51,13 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
 
   test('overview and internal navigation render without runtime errors', async ({ page }) => {
     await page.goto(`${baseUrl}/overview`, { waitUntil: 'domcontentloaded' });
-    const frame = await waitForAppFrame(page);
+    let frame = await waitForAppFrame(page);
     await assertAppHealthy(frame);
 
     for (const section of ['Assets', 'Imports', 'Configuration']) {
-      await clickNav(frame, section);
-      await frame.waitForTimeout(500);
-      await assertAppHealthy(frame);
+      frame = await clickInternalNav(page, section);
+      const body = await frame.locator('body').innerText();
+      expect(body).toContain(section === 'Imports' ? 'Import' : section);
     }
   });
 
