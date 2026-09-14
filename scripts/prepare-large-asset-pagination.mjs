@@ -1,0 +1,31 @@
+import fs from 'node:fs';
+
+// Add a cursor-paged asset listing resolver so the UI can load registers far larger
+// than the per-invocation safety cap without asking Forge to read everything at once.
+const backendPath = new URL('../src/index.js', import.meta.url);
+let backend = fs.readFileSync(backendPath, 'utf8');
+
+if (!backend.includes("resolver.define('listAssetsPage'")) {
+  const marker = "resolver.define('listAssets',async({payload})=>";
+  const insertAt = backend.indexOf(marker);
+  if (insertAt < 0) throw new Error('Could not locate listAssets resolver for large-register pagination.');
+
+  const resolver = `resolver.define('listAssetsPage',async({payload})=>{\n  const query=String(payload?.query||'').toLowerCase(),status=clean(payload?.status||''),type=clean(payload?.type||''),location=clean(payload?.location||'');\n  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));\n  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);\n  if(payload?.cursor)q=q.cursor(payload.cursor);\n  const page=await q.getMany();\n  let items=page.results.map(e=>e.value);\n  if(query)items=items.filter(a=>[a.id,a.name,a.jiraIdentifier,a.crewCode,a.type,a.manufacturer,a.model,a.serialNumber,a.assigneeName,a.status,a.location].some(v=>String(v||'').toLowerCase().includes(query)));\n  if(status)items=items.filter(a=>a.status===status);\n  if(type)items=items.filter(a=>a.type===type);\n  if(location)items=items.filter(a=>a.location===location);\n  return{items,nextCursor:page.nextCursor||null,scanned:page.results.length};\n});\n`;
+  backend = backend.slice(0, insertAt) + resolver + backend.slice(insertAt);
+  fs.writeFileSync(backendPath, backend);
+}
+
+// Patch the final UI preparation step so the Assets page walks the cursor one safe
+// page at a time. 200 pages x 100 records supports up to 20,000 stored assets while
+// keeping each Forge invocation small.
+const uiPrepPath = new URL('../static/scripts/prepare-nonblocking-load.mjs', import.meta.url);
+let uiPrep = fs.readFileSync(uiPrepPath, 'utf8');
+const oldLoad = "    try{const assetRows=await invoke('listAssets',{query,status,type,location});setAssets(assetRows||[]);}catch(e){setAssets([]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
+const newLoad = "    try{let cursor=null,assetRows=[],guard=0;do{const page=await invoke('listAssetsPage',{query,status,type,location,cursor,limit:100});assetRows.push(...(page?.items||[]));cursor=page?.nextCursor||null;guard+=1;}while(cursor&&guard<200);assetRows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));setAssets(assetRows);if(cursor)setMessage((m)=>m||'Asset register is larger than 20,000 records. Refine the filters to continue browsing safely.');}catch(e){setAssets([]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
+if (!uiPrep.includes(newLoad)) {
+  if (!uiPrep.includes(oldLoad)) throw new Error('Could not locate Asset Manager listAssets load step.');
+  uiPrep = uiPrep.replace(oldLoad, newLoad);
+  fs.writeFileSync(uiPrepPath, uiPrep);
+}
+
+console.log('Prepared cursor pagination for large asset registers.');
