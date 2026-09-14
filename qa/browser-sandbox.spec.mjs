@@ -79,7 +79,7 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
     const importButton = frame.getByRole('button', { name: 'Import', exact: true });
     await expect(importButton).toBeVisible({ timeout: 10_000 });
     await importButton.click();
-    await expect(frame.getByText('Import assets', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(frame.getByRole('heading', { name: 'Import assets', exact: true })).toBeVisible({ timeout: 10_000 });
     await assertAppHealthy(frame);
 
     const closeButton = frame.getByRole('button', { name: 'Close', exact: true });
