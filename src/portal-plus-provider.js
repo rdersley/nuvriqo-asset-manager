@@ -1,7 +1,49 @@
 export const PORTAL_PLUS_ASSET_CONTRACT_VERSION = 1;
+export const PORTAL_PLUS_ASSET_PROPERTY_KEY = 'nuvriqo.asset-manager.portal';
 
 const safe = (value, fallback = '') => value == null ? fallback : String(value);
 const safeArray = (value) => Array.isArray(value) ? value : [];
+
+function safeAsset(asset = {}) {
+  return {
+    id: safe(asset?.id),
+    deviceId: safe(asset?.deviceId),
+    name: safe(asset?.name || asset?.deviceId || 'Asset'),
+    type: safe(asset?.type),
+    manufacturer: safe(asset?.manufacturer),
+    model: safe(asset?.model),
+    holder: safe(asset?.holder),
+    status: safe(asset?.status),
+    location: safe(asset?.location)
+  };
+}
+
+export function buildPortalPlusProjectSnapshot({ projectId = '', organisations = [], assets = [], updatedAt = new Date().toISOString(), portalUrl = '' } = {}) {
+  const orgs = safeArray(organisations).map((org) => ({ id: safe(org?.id), name: safe(org?.name) })).filter((org) => org.id && org.name);
+  const byName = new Map(orgs.map((org) => [org.name.toLocaleLowerCase('en'), org]));
+  const groups = new Map(orgs.map((org) => [org.id, { id: org.id, name: org.name, assets: [] }]));
+
+  for (const asset of safeArray(assets)) {
+    const clean = safeAsset(asset);
+    if (!clean.id) continue;
+    const seen = new Set();
+    for (const name of safeArray(asset?.organisationNames).map(String)) {
+      const org = byName.get(name.toLocaleLowerCase('en'));
+      if (!org || seen.has(org.id)) continue;
+      seen.add(org.id);
+      groups.get(org.id)?.assets.push(clean);
+    }
+  }
+
+  return {
+    provider: 'nuvriqo-asset-manager',
+    contractVersion: PORTAL_PLUS_ASSET_CONTRACT_VERSION,
+    projectId: safe(projectId),
+    updatedAt: safe(updatedAt),
+    portalUrl: safe(portalUrl),
+    organisations: [...groups.values()].map((group) => ({ ...group, assets: group.assets.slice(0, 100) }))
+  };
+}
 
 export function buildPortalPlusAssetModule({ assets = [], configured = true, reason = '' } = {}) {
   const rows = safeArray(assets).slice(0, 50).map((asset) => ({
