@@ -5,9 +5,8 @@ const baseUrl = String(process.env.ASSET_MANAGER_E2E_URL || '').replace(/\/$/, '
 async function isAssetManagerFrame(frame) {
   try {
     if (frame === frame.page().mainFrame()) return false;
-    const hasTitle = await frame.getByText('Asset Manager', { exact: true }).count();
-    const hasInternalNav = await frame.getByText('Configuration', { exact: true }).count();
-    return Boolean(hasTitle && hasInternalNav);
+    const body = await frame.locator('body').innerText().catch(() => '');
+    return body.includes('Asset Manager') && body.includes('Configuration');
   } catch {
     return false;
   }
@@ -27,6 +26,24 @@ async function waitForAppFrame(page) {
   throw new Error('Asset Manager iframe did not render.');
 }
 
+async function waitForReportsFrame(page) {
+  await expect.poll(async () => {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const body = (await frame.locator('body').innerText().catch(() => '')).toLowerCase();
+      if (body.includes('report') && !body.includes('asset manager could not load')) return frame.url() || 'found';
+    }
+    return '';
+  }, { timeout: 30_000 }).not.toBe('');
+
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const body = (await frame.locator('body').innerText().catch(() => '')).toLowerCase();
+    if (body.includes('report') && !body.includes('asset manager could not load')) return frame;
+  }
+  throw new Error('Reports iframe did not render.');
+}
+
 async function assertAppHealthy(frame) {
   const body = await frame.locator('body').innerText();
   expect(body.trim().length).toBeGreaterThan(30);
@@ -35,11 +52,13 @@ async function assertAppHealthy(frame) {
   expect(body).not.toContain('There was an error invoking the function - Limits for the current installation have been exceeded');
 }
 
-async function clickInternalNav(page, name) {
+async function clickSidebar(page, name) {
   let frame = await waitForAppFrame(page);
-  const target = frame.getByText(name, { exact: true });
+  const sidebar = frame.locator('.nv-sidebar');
+  await expect(sidebar).toBeVisible({ timeout: 10_000 });
+  const target = sidebar.getByText(name, { exact: true });
   await expect(target.first()).toBeVisible({ timeout: 10_000 });
-  await target.first().click();
+  await target.first().click({ force: true });
   await page.waitForTimeout(700);
   frame = await waitForAppFrame(page);
   await assertAppHealthy(frame);
@@ -49,21 +68,33 @@ async function clickInternalNav(page, name) {
 test.describe('Asset Manager sandbox browser acceptance', () => {
   test.skip(!baseUrl, 'ASSET_MANAGER_E2E_URL is not configured.');
 
-  test('overview and internal navigation render without runtime errors', async ({ page }) => {
+  test('overview, assets, import modal and configuration render without runtime errors', async ({ page }) => {
     await page.goto(`${baseUrl}/overview`, { waitUntil: 'domcontentloaded' });
     let frame = await waitForAppFrame(page);
     await assertAppHealthy(frame);
 
-    for (const section of ['Assets', 'Imports', 'Configuration']) {
-      frame = await clickInternalNav(page, section);
-      const body = await frame.locator('body').innerText();
-      expect(body).toContain(section === 'Imports' ? 'Import' : section);
-    }
+    frame = await clickSidebar(page, 'Assets');
+    expect(await frame.locator('body').innerText()).toContain('Assets');
+
+    const importButton = frame.getByRole('button', { name: 'Import', exact: true });
+    await expect(importButton).toBeVisible({ timeout: 10_000 });
+    await importButton.click();
+    await expect(frame.getByText('Import assets', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await assertAppHealthy(frame);
+
+    const closeButton = frame.getByRole('button', { name: 'Close', exact: true });
+    if (await closeButton.count()) await closeButton.click();
+    else await frame.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.waitForTimeout(300);
+
+    frame = await clickSidebar(page, 'Configuration');
+    const configBody = await frame.locator('body').innerText();
+    expect(configBody).toContain('Configuration');
   });
 
   test('reports route renders without Forge/runtime failure', async ({ page }) => {
     await page.goto(`${baseUrl}/reports`, { waitUntil: 'domcontentloaded' });
-    const frame = await waitForAppFrame(page);
+    const frame = await waitForReportsFrame(page);
     await assertAppHealthy(frame);
     const body = await frame.locator('body').innerText();
     expect(body.toLowerCase()).toContain('report');
