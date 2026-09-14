@@ -16,6 +16,7 @@ if (!src.includes('function ConfigurableAssetsTable(')) {
   {key:'crewCode',label:'Assignment reference',default:false,get:a=>a.crewCode||'—'},
   {key:'status',label:'Status',default:true,get:a=>a.status||'—'},
   {key:'location',label:'Location',default:true,get:a=>a.location||'—'},
+  {key:'client',label:'Client',default:true,get:a=>a.client||'—'},
   {key:'manufacturer',label:'Manufacturer',default:false,get:a=>a.manufacturer||'—'},
   {key:'model',label:'Model',default:false,get:a=>a.model||'—'},
   {key:'serialNumber',label:'Serial number',default:true,get:a=>a.serialNumber||'—'},
