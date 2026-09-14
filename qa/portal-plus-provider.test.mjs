@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPortalPlusAssetModule, PORTAL_PLUS_ASSET_CONTRACT_VERSION } from '../src/portal-plus-provider.js';
+import { buildPortalPlusAssetModule, buildPortalPlusProjectSnapshot, PORTAL_PLUS_ASSET_CONTRACT_VERSION, PORTAL_PLUS_ASSET_PROPERTY_KEY } from '../src/portal-plus-provider.js';
 
 test('builds a Portal+ Assets module with bounded customer-safe data', () => {
   const module = buildPortalPlusAssetModule({
@@ -29,6 +29,25 @@ test('builds a Portal+ Assets module with bounded customer-safe data', () => {
   assert.equal(module.items[0].metadata.organisationNames[0], 'Example Org');
   assert.equal('serialNumber' in module.items[0].metadata, false);
   assert.equal(JSON.stringify(module).includes('SHOULD-NOT-BE-SHARED'), false);
+});
+
+test('builds organisation-scoped project snapshot for Portal+', () => {
+  const snapshot = buildPortalPlusProjectSnapshot({
+    projectId: '10001',
+    updatedAt: '2026-09-14T14:30:00.000Z',
+    organisations: [{ id: '10', name: 'Example Org' }, { id: '20', name: 'Other Org' }],
+    assets: [
+      { id: 'a1', deviceId: 'DEV-1', name: 'Laptop 1', status: 'Assigned', serialNumber: 'PRIVATE', organisationNames: ['Example Org'] },
+      { id: 'a2', deviceId: 'DEV-2', name: 'Tablet 2', status: 'In service', organisationNames: ['Other Org', 'Example Org'] }
+    ]
+  });
+
+  assert.equal(PORTAL_PLUS_ASSET_PROPERTY_KEY, 'nuvriqo.asset-manager.portal');
+  assert.equal(snapshot.provider, 'nuvriqo-asset-manager');
+  assert.equal(snapshot.contractVersion, PORTAL_PLUS_ASSET_CONTRACT_VERSION);
+  assert.equal(snapshot.organisations.find((x) => x.id === '10').assets.length, 2);
+  assert.equal(snapshot.organisations.find((x) => x.id === '20').assets.length, 1);
+  assert.equal(JSON.stringify(snapshot).includes('PRIVATE'), false);
 });
 
 test('returns disabled module when Asset Manager is not configured', () => {
