@@ -10,6 +10,7 @@
     "test": "npm --prefix static test",
     "qa:test": "node --test qa/qa-simulations.test.mjs",
     "qa:live": "node qa/live-jira-smoke.mjs",
+    "qa:browser": "playwright test qa/browser-sandbox.spec.mjs",
     "qa": "npm test && npm run qa:test",
     "verify:marketplace": "node scripts/verify-marketplace-release.mjs",
     "validate": "node --check src/index.js && node --check src/ticket-sync.js && node --check src/issue-panel.js && node --check src/device-split.js && node --check src/portal-assets.js && node --check src/reports.js && node --check src/crew.js && npm run qa && npm run build && npm run verify:marketplace"
@@ -18,5 +19,8 @@
     "@forge/api": "^5.0.0",
     "@forge/resolver": "^1.7.0",
     "@forge/kvs": "^1.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
   }
 }
