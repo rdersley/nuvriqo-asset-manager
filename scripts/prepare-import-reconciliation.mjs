@@ -19,7 +19,7 @@ function isJiraDiscoveredAsset(asset){return String(asset?.notes||'').startsWith
 async function reconciliationCandidateByName(name){
   const value=reconciliationValue(name);if(!value)return null;
   const indexed=await kvs.get(nameIndexKey(value));
-  return indexed?.assetId?await kvs.get(\`${ASSET_PREFIX}\${indexed.assetId}\`):null;
+  return indexed?.assetId?await kvs.get(ASSET_PREFIX+indexed.assetId):null;
 }
 async function reconciliationCandidateByIdentifier(fieldId,value){
   const match=reconciliationValue(value);if(!fieldId||!match)return null;
@@ -35,9 +35,9 @@ async function classifyImportRow(row,settings){
   if(unique.length>1){return{action:'review',message:'Multiple existing assets match this row. Review before importing.',candidateIds:unique.map(a=>a.id),existing:unique.map(a=>({id:a.id,name:a.name,jiraIdentifier:a.jiraIdentifier,serialNumber:a.serialNumber}))};}
   const existing=unique[0]||null;
   if(!existing)return{action:'create',message:'Create new asset.',existing:null};
-  if(bySerial?.id===existing.id&&normaliseName(row?.serialNumber)!==normaliseName(row?.jiraIdentifier||''))return{action:'merge-serial',message:\`Merge Jira-discovered record “\${existing.name}” using matching serial number.\`,existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
-  if(byDevice?.id===existing.id)return{action:'update-device-id',message:\`Update existing asset “\${existing.name}” by Device ID.\`,existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
-  return{action:'update-name',message:\`Update existing asset “\${existing.name}” by device name.\`,existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
+  if(bySerial?.id===existing.id&&normaliseName(row?.serialNumber)!==normaliseName(row?.jiraIdentifier||''))return{action:'merge-serial',message:'Merge Jira-discovered record “'+existing.name+'” using matching serial number.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
+  if(byDevice?.id===existing.id)return{action:'update-device-id',message:'Update existing asset “'+existing.name+'” by Device ID.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
+  return{action:'update-name',message:'Update existing asset “'+existing.name+'” by device name.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
 }
 resolver.define('previewAssetImportReconciliation',async({payload})=>{
   const rows=safeArray(payload?.assets).slice(0,500);
@@ -56,19 +56,19 @@ resolver.define('reconcileAssetImport',async({payload})=>{
       if(!clean(row.name))throw new Error('Device Name is required.');
       const match=await classifyImportRow(row,settings);
       if(match.action==='review')throw new Error(match.message);
-      let existing=match.existing?.id?await kvs.get(\`${ASSET_PREFIX}\${match.existing.id}\`):null;
+      let existing=match.existing?.id?await kvs.get(ASSET_PREFIX+match.existing.id):null;
       if(!existing){await saveOneAsset(row,'import');created+=1;continue;}
       const oldName=existing.name||'';const oldIdentifier=existing.jiraIdentifier||existing.name||'';
       const aliases=[...new Set([...safeArray(existing.jiraAliases),oldIdentifier].map(reconciliationValue).filter(Boolean).filter(v=>normaliseName(v)!==normaliseName(row.jiraIdentifier||row.name||'')))];
       const saved=await saveOneAsset({...row,id:existing.id},'import-reconcile');
       const reconciled={...saved,jiraAliases:aliases,notes:clean(row.notes)||saved.notes||''};
-      await kvs.set(\`${ASSET_PREFIX}\${saved.id}\`,reconciled);
+      await kvs.set(ASSET_PREFIX+saved.id,reconciled);
       if(match.action==='merge-serial'){
         merged+=1;
-        await addHistory(saved.id,{type:'merged',source:'import-reconcile',message:\`Merged Jira-discovered record \${oldIdentifier||oldName} into \${saved.name} during CSV reconciliation\`,fromDevice:oldName,fromIdentifier:oldIdentifier,matchedBy:'serial-number'});
+        await addHistory(saved.id,{type:'merged',source:'import-reconcile',message:'Merged Jira-discovered record '+(oldIdentifier||oldName)+' into '+saved.name+' during CSV reconciliation',fromDevice:oldName,fromIdentifier:oldIdentifier,matchedBy:'serial-number'});
       }else{
         updated+=1;
-        await addHistory(saved.id,{type:'import-update',source:'import-reconcile',message:\`Updated \${saved.name} from CSV import\`,matchedBy:match.action==='update-device-id'?'device-id':'device-name'});
+        await addHistory(saved.id,{type:'import-update',source:'import-reconcile',message:'Updated '+saved.name+' from CSV import',matchedBy:match.action==='update-device-id'?'device-id':'device-name'});
       }
     }catch(error){failed.push({index:i,name:row?.name||'',error:error?.message||'Import reconciliation failed.'});}
   }
