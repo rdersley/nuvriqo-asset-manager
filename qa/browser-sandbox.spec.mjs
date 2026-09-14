@@ -2,6 +2,13 @@ import { test, expect } from '@playwright/test';
 
 const baseUrl = String(process.env.ASSET_MANAGER_E2E_URL || '').replace(/\/$/, '');
 
+function internalAdminUrl(route) {
+  const url = new URL(baseUrl);
+  const match = url.pathname.match(/^\/jira\/apps\/([^/]+)\/([^/]+)/);
+  if (!match) throw new Error(`Could not derive internal admin URL from ${baseUrl}`);
+  return `${url.origin}/jira/settings/apps/${match[1]}/${match[2]}/${route}`;
+}
+
 async function isAssetManagerFrame(frame) {
   try {
     if (frame === frame.page().mainFrame()) return false;
@@ -44,12 +51,32 @@ async function waitForReportsFrame(page) {
   throw new Error('Reports iframe did not render.');
 }
 
+async function waitForInternalFrame(page, heading) {
+  await expect.poll(async () => {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const body = await frame.locator('body').innerText().catch(() => '');
+      if (body.includes(heading)) return frame.url() || 'found';
+    }
+    return '';
+  }, { timeout: 30_000 }).not.toBe('');
+
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const body = await frame.locator('body').innerText().catch(() => '');
+    if (body.includes(heading)) return frame;
+  }
+  throw new Error(`${heading} iframe did not render.`);
+}
+
 async function assertAppHealthy(frame) {
   const body = await frame.locator('body').innerText();
   expect(body.trim().length).toBeGreaterThan(30);
   expect(body).not.toContain('Asset Manager could not load');
   expect(body).not.toContain('locationMapping is not defined');
   expect(body).not.toContain('There was an error invoking the function - Limits for the current installation have been exceeded');
+  expect(body).not.toContain('Could not load crew report.');
+  expect(body).not.toContain('Could not load reconciliation report.');
 }
 
 async function clickSidebar(page, name) {
@@ -98,5 +125,47 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
     await assertAppHealthy(frame);
     const body = await frame.locator('body').innerText();
     expect(body.toLowerCase()).toContain('report');
+  });
+
+  test('internal Crew Tracking loads live data and validates a crew import file without writing', async ({ page }) => {
+    await page.goto(internalAdminUrl('crew-tracking'), { waitUntil: 'domcontentloaded' });
+    const frame = await waitForInternalFrame(page, 'Internal Crew Tracking');
+    await assertAppHealthy(frame);
+
+    await expect(frame.getByRole('heading', { name: 'Internal Crew Tracking', exact: true })).toBeVisible();
+    await expect(frame.getByText('Total crew', { exact: true })).toBeVisible();
+    await expect(frame.getByRole('button', { name: 'Link JSM customers', exact: true })).toBeVisible();
+    await expect(frame.getByPlaceholder('Search crew, name, location, type or device…')).toBeVisible();
+
+    const fileInput = frame.locator('input[type="file"]').first();
+    await fileInput.setInputFiles({
+      name: 'qa-crew.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('Crew Code,Name,Location,Email,Status\nQA-BROWSER-001,QA Browser User,DUB,qa-browser@example.invalid,Active\n'),
+    });
+    await expect(frame.getByText(/1 crew records read/i)).toBeVisible({ timeout: 10_000 });
+    await expect(frame.getByRole('button', { name: /Resume\/import 1 crew/i })).toBeVisible();
+    await assertAppHealthy(frame);
+  });
+
+  test('internal Device Usage Reconciliation loads live data and validates a vPOS report without writing', async ({ page }) => {
+    await page.goto(internalAdminUrl('device-usage'), { waitUntil: 'domcontentloaded' });
+    const frame = await waitForInternalFrame(page, 'Device Usage Reconciliation');
+    await assertAppHealthy(frame);
+
+    await expect(frame.getByRole('heading', { name: 'Device Usage Reconciliation', exact: true })).toBeVisible();
+    await expect(frame.getByText('Devices checked', { exact: true })).toBeVisible();
+    await expect(frame.getByText('Assignment mismatches', { exact: true })).toBeVisible();
+    await expect(frame.getByPlaceholder('Search device, code, crew, type or location…')).toBeVisible();
+
+    const fileInput = frame.locator('input[type="file"]').first();
+    await fileInput.setInputFiles({
+      name: 'qa-vpos.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('Device Name,Device Code,Last Login,Last Sync DateTime\nQA-VPOS-001,QA-CODE-001,QA-BROWSER-001,2026-09-14 12:00:00\n'),
+    });
+    await expect(frame.getByText(/1 devices with a Last Login are ready to import and reconcile/i)).toBeVisible({ timeout: 10_000 });
+    await expect(frame.getByRole('button', { name: /Import & reconcile 1 devices/i })).toBeVisible();
+    await assertAppHealthy(frame);
   });
 });
