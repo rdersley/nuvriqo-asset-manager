@@ -197,3 +197,44 @@ jobs:
           fi
       - name: Post-deploy Jira smoke tests
         run: node qa/live-jira-smoke.mjs
+
+  browser-e2e-sandbox:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    needs: deploy-sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: retailinmotion-sandbox1
+    env:
+      ASSET_MANAGER_E2E_URL: https://retailinmotion-sandbox1.atlassian.net/jira/apps/ffd70422-97fd-49bb-83ed-0dc607590642/07cd1c66-3b03-4688-9b9b-a50402988671
+      PLAYWRIGHT_STORAGE_STATE_B64: ${{ secrets.PLAYWRIGHT_STORAGE_STATE_B64 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Browser QA configuration notice
+        if: env.PLAYWRIGHT_STORAGE_STATE_B64 == ''
+        run: echo "::warning::Authenticated browser QA is ready but PLAYWRIGHT_STORAGE_STATE_B64 is not configured yet."
+      - name: Install browser QA dependencies
+        if: env.PLAYWRIGHT_STORAGE_STATE_B64 != ''
+        run: npm install --ignore-scripts
+      - name: Install Chromium
+        if: env.PLAYWRIGHT_STORAGE_STATE_B64 != ''
+        run: npx playwright install --with-deps chromium
+      - name: Restore Atlassian browser session
+        if: env.PLAYWRIGHT_STORAGE_STATE_B64 != ''
+        run: node qa/write-playwright-state.mjs
+      - name: Run sandbox browser acceptance
+        if: env.PLAYWRIGHT_STORAGE_STATE_B64 != ''
+        run: npm run qa:browser
+      - name: Upload browser failure evidence
+        if: failure() && env.PLAYWRIGHT_STORAGE_STATE_B64 != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: asset-manager-browser-e2e
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
