@@ -29,9 +29,10 @@ replaceOnce(
 );
 
 const locationMapping = "{fieldSelect('Jira location field','jiraLocationField','Optional. The latest matching ticket updates the asset location.')}";
+const clientMapping = "{fieldSelect('Jira client field','jiraClientField','Optional. Map your SD Client custom field here. The newest populated value for each Device ID is stored against the asset.')}";
 if (!src.includes("'jiraClientField'")) {
   if (!src.includes(locationMapping)) throw new Error('Could not locate Jira location mapping for Client insertion.');
-  src = src.replace(locationMapping, "{fieldSelect('Jira client field','jiraClientField','Optional. Map your SD Client custom field here. The newest populated value for each Device ID is stored against the asset.')}${locationMapping}");
+  src = src.replace(locationMapping, clientMapping + locationMapping);
 }
 
 replaceOnce(
@@ -41,5 +42,9 @@ replaceOnce(
 );
 
 src = src.replaceAll('guard<2000', 'guard<10000');
+
+if (/\$\{locationMapping\}|\{locationMapping\}/.test(src)) {
+  throw new Error('SD Client UI patch left an unresolved locationMapping reference in the generated UI.');
+}
 
 fs.writeFileSync(path, src);
