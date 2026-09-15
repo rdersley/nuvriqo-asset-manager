@@ -119,6 +119,46 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
     expect(configBody).toContain('Configuration');
   });
 
+  test('asset register exposes configurable Client view, row selection and safe reconciliation preview', async ({ page }) => {
+    await page.goto(`${baseUrl}/overview`, { waitUntil: 'domcontentloaded' });
+    let frame = await clickSidebar(page, 'Assets');
+    await assertAppHealthy(frame);
+
+    const columnsButton = frame.getByRole('button', { name: 'Columns & filters', exact: true });
+    await expect(columnsButton).toBeVisible({ timeout: 10_000 });
+    await columnsButton.click();
+    await expect(frame.getByText('Choose columns', { exact: true })).toBeVisible();
+    await expect(frame.getByText('Client', { exact: true })).toBeVisible();
+
+    const addFilter = frame.locator('.filters select').last();
+    await expect(addFilter.locator('option', { hasText: 'Client' })).toHaveCount(1);
+
+    const selectAll = frame.getByLabel('Select all visible assets');
+    if (await selectAll.count()) {
+      await expect(selectAll).toBeVisible();
+      const firstRowCheckbox = frame.locator('tbody input[type="checkbox"]').first();
+      if (await firstRowCheckbox.count()) {
+        await firstRowCheckbox.check();
+        await expect(frame.getByRole('button', { name: /Delete selected \(1\)/ })).toBeVisible();
+        await firstRowCheckbox.uncheck();
+      }
+    }
+
+    await frame.getByRole('button', { name: 'Import', exact: true }).click();
+    await expect(frame.getByRole('heading', { name: 'Import assets', exact: true })).toBeVisible({ timeout: 10_000 });
+    const fileInput = frame.locator('input[type="file"]').first();
+    const unique = `QA-BROWSER-${Date.now()}`;
+    await fileInput.setInputFiles({
+      name: 'qa-asset-reconcile.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(`Device Name,Device ID,Serial Number,Type,Client\n${unique},${unique},SER-${unique},Laptop,QA\n`),
+    });
+    await expect(frame.getByText(/1 ready to import/i)).toBeVisible({ timeout: 15_000 });
+    await expect(frame.getByText('Create new', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await assertAppHealthy(frame);
+    await frame.getByRole('button', { name: 'Cancel', exact: true }).click();
+  });
+
   test('reports route renders without Forge/runtime failure', async ({ page }) => {
     await page.goto(`${baseUrl}/reports`, { waitUntil: 'domcontentloaded' });
     const frame = await waitForReportsFrame(page);
