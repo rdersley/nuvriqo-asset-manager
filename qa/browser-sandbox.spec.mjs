@@ -119,8 +119,11 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
     const configBody = await frame.locator('body').innerText();
     expect(configBody).toContain('Configuration');
     await expect(frame.locator('.nv-sidebar')).toBeVisible();
-    await expect(frame.locator('.nv-sidebar').getByText('Configuration', { exact: true })).toBeVisible();
+    await expect(frame.locator('.nv-sidebar').getByText('Overview', { exact: true })).toBeVisible();
     await expect(frame.locator('.nv-sidebar').getByText('Assets', { exact: true })).toBeVisible();
+    await expect(frame.locator('.nv-sidebar').getByText('Imports', { exact: true })).toBeVisible();
+    await expect(frame.locator('.nv-sidebar').getByText('Reports', { exact: true })).toBeVisible();
+    await expect(frame.locator('.nv-sidebar').getByText('Configuration', { exact: true })).toBeVisible();
   });
 
   test('asset register exposes configurable Client view, row selection and safe reconciliation preview', async ({ page }) => {
@@ -159,7 +162,8 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
       buffer: Buffer.from(`Device Name,Device ID,Serial Number,Type,Client\n${unique},${unique},SER-${unique},Laptop,QA\n`),
     });
     await expect(frame.getByText(/1 ready to import/i)).toBeVisible({ timeout: 20_000 });
-    await expect(frame.getByText('Create new', { exact: true })).toBeVisible({ timeout: 20_000 });
+    const resultCell = frame.locator('tbody tr').first().locator('td').last();
+    await expect(resultCell).toContainText(/Create new|Update existing|Update by name|Merge by serial|Reconcile during import/i, { timeout: 20_000 });
     await assertAppHealthy(frame);
     await frame.getByRole('button', { name: 'Cancel', exact: true }).click();
 
