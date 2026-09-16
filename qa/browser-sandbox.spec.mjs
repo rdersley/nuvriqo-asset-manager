@@ -75,6 +75,7 @@ async function assertAppHealthy(frame) {
   expect(body).not.toContain('Asset Manager could not load');
   expect(body).not.toContain('locationMapping is not defined');
   expect(body).not.toContain('There was an error invoking the function - Limits for the current installation have been exceeded');
+  expect(body).not.toContain('Task timed out after 25.00 seconds');
   expect(body).not.toContain('Could not load crew report.');
   expect(body).not.toContain('Could not load reconciliation report.');
 }
@@ -117,9 +118,13 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
     frame = await clickSidebar(page, 'Configuration');
     const configBody = await frame.locator('body').innerText();
     expect(configBody).toContain('Configuration');
+    await expect(frame.locator('.nv-sidebar')).toBeVisible();
+    await expect(frame.locator('.nv-sidebar').getByText('Configuration', { exact: true })).toBeVisible();
+    await expect(frame.locator('.nv-sidebar').getByText('Assets', { exact: true })).toBeVisible();
   });
 
   test('asset register exposes configurable Client view, row selection and safe reconciliation preview', async ({ page }) => {
+    test.setTimeout(90_000);
     await page.goto(`${baseUrl}/overview`, { waitUntil: 'domcontentloaded' });
     let frame = await clickSidebar(page, 'Assets');
     await assertAppHealthy(frame);
@@ -128,7 +133,7 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
     await expect(columnsButton).toBeVisible({ timeout: 10_000 });
     await columnsButton.click();
     await expect(frame.getByText('Choose columns', { exact: true })).toBeVisible();
-    await expect(frame.getByText('Client', { exact: true })).toBeVisible();
+    await expect(frame.locator('label').filter({ hasText: /^Client$/ })).toBeVisible();
 
     const addFilter = frame.locator('.filters select').last();
     await expect(addFilter.locator('option', { hasText: 'Client' })).toHaveCount(1);
@@ -153,8 +158,27 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
       mimeType: 'text/csv',
       buffer: Buffer.from(`Device Name,Device ID,Serial Number,Type,Client\n${unique},${unique},SER-${unique},Laptop,QA\n`),
     });
-    await expect(frame.getByText(/1 ready to import/i)).toBeVisible({ timeout: 15_000 });
-    await expect(frame.getByText('Create new', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(frame.getByText(/1 ready to import/i)).toBeVisible({ timeout: 20_000 });
+    await expect(frame.getByText('Create new', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await assertAppHealthy(frame);
+    await frame.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    // Large-file acceptance: prove the preview is bounded and remaining rows are deferred
+    // rather than sending the whole file through one Forge invocation.
+    await frame.getByRole('button', { name: 'Import', exact: true }).click();
+    const largeRows = Array.from({ length: 205 }, (_, i) => {
+      const id = `${unique}-LARGE-${String(i + 1).padStart(3, '0')}`;
+      return `${id},${id},SER-${id},Laptop,QA`;
+    });
+    const largeFileInput = frame.locator('input[type="file"]').first();
+    await largeFileInput.setInputFiles({
+      name: 'qa-large-asset-reconcile.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(`Device Name,Device ID,Serial Number,Type,Client\n${largeRows.join('\n')}\n`),
+    });
+    await expect(frame.getByText(/205 ready to import/i)).toBeVisible({ timeout: 60_000 });
+    await expect(frame.getByText(/Large-file mode: the first 200 valid rows are previewed now/i)).toBeVisible({ timeout: 60_000 });
+    await expect(frame.getByText('Reconcile during import', { exact: true }).first()).toBeVisible({ timeout: 60_000 });
     await assertAppHealthy(frame);
     await frame.getByRole('button', { name: 'Cancel', exact: true }).click();
   });
