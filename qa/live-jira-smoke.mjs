@@ -61,8 +61,8 @@ console.log(`Jira enhanced search is healthy. Sample issues returned: ${search.i
 const likelyAssetFields = fields.filter((field) => /asset|device|hardware|serial/i.test(String(field.name || '')));
 console.log(`Potential asset/device fields visible to the app: ${likelyAssetFields.map((f) => `${f.name} (${f.id})`).join(', ') || 'none'}`);
 
-// Release audit: exercise the exact paginated enhanced-search pattern used by Asset Manager.
-// Prefer an exact "Device ID" field, otherwise allow an explicit CI override.
+// Read-only smoke audit: verify the same nextPageToken pattern used by Asset Manager
+// without exhaustively walking very large Jira estates on every deployment.
 const requestedAssetFieldId = process.env.ASSET_FIELD_ID || '';
 const deviceIdField = customFields.find((field) => field.id === requestedAssetFieldId)
   || customFields.find((field) => normalise(field.name) === 'device id');
@@ -72,6 +72,7 @@ if (deviceIdField) {
   let nextPageToken;
   let pages = 0;
   const seenPageTokens = new Set();
+  const maxSmokePages = 10;
   do {
     const body = {
       jql: `cf[${numericId}] is not EMPTY ORDER BY created DESC`,
@@ -92,8 +93,7 @@ if (deviceIdField) {
     issues.push(...page.issues);
     nextPageToken = page.nextPageToken || null;
     pages += 1;
-    if (pages > 500) throw new Error('Device ID audit exceeded 500 pages; aborting the release audit as a safety guard.');
-  } while (nextPageToken);
+  } while (nextPageToken && pages < maxSmokePages);
 
   const identifiers = issues.flatMap((issue) => fieldValues(issue.fields?.[deviceIdField.id]));
   const valid = identifiers.filter(validIdentifier);
@@ -103,7 +103,8 @@ if (deviceIdField) {
     if (!unique.has(key)) unique.set(key, identifier);
   }
   const invalid = identifiers.filter((identifier) => !validIdentifier(identifier));
-  console.log(`DEVICE_ID_AUDIT field=${deviceIdField.name} (${deviceIdField.id}) pages=${pages} issues=${issues.length} values=${identifiers.length} valid=${valid.length} uniqueValid=${unique.size} invalid=${invalid.length}`);
+  const continuation = nextPageToken ? 'more pages available; bounded smoke sample complete' : 'end of result set reached';
+  console.log(`DEVICE_ID_AUDIT field=${deviceIdField.name} (${deviceIdField.id}) sampledPages=${pages} sampledIssues=${issues.length} values=${identifiers.length} valid=${valid.length} uniqueValid=${unique.size} invalid=${invalid.length}; ${continuation}`);
   if (invalid.length) console.log(`DEVICE_ID_AUDIT invalid samples: ${[...new Set(invalid)].slice(0, 10).join(', ')}`);
 } else {
   console.log('DEVICE_ID_AUDIT skipped: no exact Device ID custom field was found.');
