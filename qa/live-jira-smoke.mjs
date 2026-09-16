@@ -71,13 +71,18 @@ if (deviceIdField) {
   const issues = [];
   let nextPageToken;
   let pages = 0;
+  const seenPageTokens = new Set();
   do {
     const body = {
       jql: `cf[${numericId}] is not EMPTY ORDER BY created DESC`,
       fields: [deviceIdField.id],
       maxResults: 100
     };
-    if (nextPageToken) body.nextPageToken = nextPageToken;
+    if (nextPageToken) {
+      if (seenPageTokens.has(nextPageToken)) throw new Error('Device ID audit pagination repeated a nextPageToken; pagination is looping.');
+      seenPageTokens.add(nextPageToken);
+      body.nextPageToken = nextPageToken;
+    }
     const page = await jira('/rest/api/3/search/jql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -87,7 +92,7 @@ if (deviceIdField) {
     issues.push(...page.issues);
     nextPageToken = page.nextPageToken || null;
     pages += 1;
-    if (pages > 100) throw new Error('Device ID audit exceeded 100 pages; pagination may be looping.');
+    if (pages > 500) throw new Error('Device ID audit exceeded 500 pages; aborting the release audit as a safety guard.');
   } while (nextPageToken);
 
   const identifiers = issues.flatMap((issue) => fieldValues(issue.fields?.[deviceIdField.id]));
