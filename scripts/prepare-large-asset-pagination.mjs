@@ -15,17 +15,23 @@ if (!backend.includes("resolver.define('listAssetsPage'")) {
   fs.writeFileSync(backendPath, backend);
 }
 
-// Patch the final UI preparation step so the Assets page walks the cursor one safe
-// page at a time. 200 pages x 100 records supports up to 20,000 stored assets while
-// keeping each Forge invocation small.
+// Patch the final UI preparation step so the Assets page loads a useful working set
+// immediately instead of trying to walk an entire 10k-20k register on every refresh.
+// The previous 200-page loop could consume the installation read budget and then clear
+// the table, which made a successful large import appear to contain zero records.
 const uiPrepPath = new URL('../static/scripts/prepare-nonblocking-load.mjs', import.meta.url);
 let uiPrep = fs.readFileSync(uiPrepPath, 'utf8');
 const oldLoad = "    try{const assetRows=await invoke('listAssets',{query,status,type,location});setAssets(assetRows||[]);}catch(e){setAssets([]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
-const newLoad = "    try{let cursor=null,assetRows=[],guard=0;do{const page=await invoke('listAssetsPage',{query,status,type,location,cursor,limit:100});assetRows.push(...(page?.items||[]));cursor=page?.nextCursor||null;guard+=1;}while(cursor&&guard<200);assetRows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));setAssets(assetRows);if(cursor)setMessage((m)=>m||'Asset register is larger than 20,000 records. Refine the filters to continue browsing safely.');}catch(e){setAssets([]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
+const newLoad = "    try{let cursor=null,assetRows=[],guard=0,lastError=null;do{try{const page=await invoke('listAssetsPage',{query,status,type,location,cursor,limit:100});assetRows.push(...(page?.items||[]));cursor=page?.nextCursor||null;guard+=1;}catch(e){lastError=e;break;}}while(cursor&&guard<10);assetRows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));setAssets(assetRows);if(lastError&&assetRows.length)setMessage((m)=>m||'Showing loaded assets; more records are available but the current read window was reached. Refine the filters to narrow the register.');else if(lastError)setMessage((m)=>m||lastError?.message||'Could not load assets. Configuration is still available.');else if(cursor)setMessage((m)=>m||'Showing the first 1,000 matching records. Refine the filters to browse the rest of this large register safely.');}catch(e){setAssets((current)=>current?.length?current:[]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
 if (!uiPrep.includes(newLoad)) {
-  if (!uiPrep.includes(oldLoad)) throw new Error('Could not locate Asset Manager listAssets load step.');
-  uiPrep = uiPrep.replace(oldLoad, newLoad);
+  if (uiPrep.includes(oldLoad)) {
+    uiPrep = uiPrep.replace(oldLoad, newLoad);
+  } else {
+    const priorPaged = /    try\{let cursor=null,assetRows=\[\],guard=0;do\{const page=await invoke\('listAssetsPage',[\s\S]*?Configuration is still available\.');\}/;
+    if (!priorPaged.test(uiPrep)) throw new Error('Could not locate Asset Manager asset load step.');
+    uiPrep = uiPrep.replace(priorPaged, newLoad);
+  }
   fs.writeFileSync(uiPrepPath, uiPrep);
 }
 
-console.log('Prepared cursor pagination for large asset registers.');
+console.log('Prepared bounded cursor pagination for large asset registers.');
