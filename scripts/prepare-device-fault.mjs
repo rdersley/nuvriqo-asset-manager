@@ -22,7 +22,7 @@ const replacements = [
   ],
   [
     "async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event }); }",
-    "async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event }); }\nfunction faultHistoryKey(assetId,ticket){const label=clean(ticket?.fault||ticket?.summary||'Fault')||'Fault';const fingerprint=createHash('sha256').update(`${ticket?.key||''}:${normaliseName(label)}`).digest('hex').slice(0,16);return `${FAULT_HISTORY_PREFIX}${assetId}:${ticket?.key||'unknown'}:${fingerprint}`;}\nasync function recordFaultHistory(asset,ticket,knownKeys){if(!asset?.id||!ticket?.key||ticket.relation!=='primary')return null;const key=faultHistoryKey(asset.id,ticket);if(knownKeys?.has(key))return null;const value={historyKey:key,assetId:asset.id,deviceName:asset.name||'',issueKey:ticket.key,fault:clean(ticket.fault||ticket.summary||'Fault')||'Fault',summary:ticket.summary||'',issueCreated:ticket.created||'',firstSeen:now(),statusAtFirstSeen:ticket.status||'',resolvedAtFirstSeen:Boolean(ticket.resolved)||ticket.statusCategory==='done'};await kvs.set(key,value);knownKeys?.add(key);return value;}"
+    "async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event }); }\nfunction faultHistoryKey(assetId,ticket){const label=clean(ticket?.fault||'');if(!label)return'';const fingerprint=createHash('sha256').update(`${ticket?.key||''}:${normaliseName(label)}`).digest('hex').slice(0,16);return `${FAULT_HISTORY_PREFIX}${assetId}:${ticket?.key||'unknown'}:${fingerprint}`;}\nasync function recordFaultHistory(asset,ticket,knownKeys){const fault=clean(ticket?.fault||'');if(!asset?.id||!ticket?.key||ticket.relation!=='primary'||!fault)return null;const key=faultHistoryKey(asset.id,ticket);if(!key||knownKeys?.has(key))return null;const value={historyKey:key,assetId:asset.id,deviceName:asset.name||'',issueKey:ticket.key,fault,summary:ticket.summary||'',issueCreated:ticket.created||'',firstSeen:now(),statusAtFirstSeen:ticket.status||'',resolvedAtFirstSeen:Boolean(ticket.resolved)||ticket.statusCategory==='done'};await kvs.set(key,value);knownKeys?.add(key);return value;}"
   ],
   [
     "function ticketFields(issue, relation='primary') { return { key:issue.key, relation, summary:issue.fields?.summary||'', status:issue.fields?.status?.name||'',",
@@ -70,7 +70,7 @@ const replacements = [
   ],
   [
     "const open=primary.filter(t=>!t.resolved&&t.statusCategory!=='done').length;rows.push({assetId:asset.id",
-    "const open=primary.filter(t=>!t.resolved&&t.statusCategory!=='done').length;for(const ticket of primary)await recordFaultHistory(asset,ticket,knownFaultHistoryKeys);rows.push({assetId:asset.id"
+    "const faults=primary.filter(t=>clean(t.fault||''));const open=faults.filter(t=>!t.resolved&&t.statusCategory!=='done').length;for(const ticket of faults)await recordFaultHistory(asset,ticket,knownFaultHistoryKeys);rows.push({assetId:asset.id"
   ],
   [
     "resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});",
