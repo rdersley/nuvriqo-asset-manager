@@ -17,6 +17,15 @@ src=src
   .replaceAll('Base and holder remain opt-in','Location and holder remain opt-in');
 
 src=src.replace("<td>{t.summary || 'Ticket'}</td>","<td>{t.fault || t.summary || 'Ticket'}</td>");
+const faultStatsNeedle="const primaryTickets=tickets.filter(t=>t.relation!=='related'); const relatedTickets=tickets.filter(t=>t.relation==='related'); const open = primaryTickets.filter((t) => !t.resolved && t.statusCategory !== 'done').length;";
+const faultStatsReplacement="const primaryTickets=tickets.filter(t=>t.relation!=='related'); const relatedTickets=tickets.filter(t=>t.relation==='related'); const faultTickets=primaryTickets.filter(t=>String(t.fault||'').trim()); const open = faultTickets.filter((t) => !t.resolved && t.statusCategory !== 'done').length;";
+if(src.includes(faultStatsNeedle))src=src.replace(faultStatsNeedle,faultStatsReplacement);
+else if(!src.includes('const faultTickets=primaryTickets.filter'))throw new Error('Could not update asset fault statistics.');
+
+src=src
+  .replace('<strong>{primaryTickets.length}</strong><span>Primary faults</span>','<strong>{faultTickets.length}</strong><span>Primary faults</span>')
+  .replace('Primary Device ID tickets count as faults. Related Assets show where this device was involved without becoming the primary fault asset.','Only primary tickets with the mapped Device Fault field populated count as faults. Other tickets remain in Ticket history. Related Assets show where this device was involved without becoming the primary fault asset.');
+
 const detailState="const [tickets, setTickets] = useState([]); const [history, setHistory] = useState([]);";
 const detailStateReplacement="const [tickets, setTickets] = useState([]); const [history, setHistory] = useState([]); const [faultHistory,setFaultHistory]=useState([]);";
 if(src.includes(detailState)) src=src.replace(detailState,detailStateReplacement);
@@ -26,7 +35,7 @@ const detailLoadReplacement="useEffect(() => { invoke('getAssetTickets', { asset
 if(src.includes(detailLoad)) src=src.replace(detailLoad,detailLoadReplacement);
 else if(!src.includes("invoke('getFaultHistory'")) throw new Error('Could not locate asset detail loaders.');
 const activityCard="<div className=\"card\"><h2>Activity</h2>{history.length ?";
-const ledgerCard="<div className=\"card fault-card\"><div className=\"section-head\"><div><h2>Historical fault ledger</h2><p>Permanent record of each distinct fault ever recorded against this device.</p></div><span>{faultHistory.length} faults</span></div>{faultHistory.length?<div className=\"table-wrap\"><table className=\"fault-table\"><thead><tr><th>Jira issue</th><th>Device fault</th><th>Issue created</th><th>Status when first recorded</th></tr></thead><tbody>{faultHistory.map((f)=><tr key={f.historyKey}><td><button className=\"issue-link\" onClick={()=>router.open(`/browse/${f.issueKey}`)}>{f.issueKey}</button></td><td>{f.fault||f.summary||'Fault'}</td><td>{formatDate(f.issueCreated||f.firstSeen)}</td><td>{f.statusAtFirstSeen||'—'}</td></tr>)}</tbody></table></div>:<div className=\"empty-small\">No historical faults recorded yet.</div>}</div><div className=\"card\"><h2>Activity</h2>{history.length ?";
+const ledgerCard="<div className=\"card fault-card\"><div className=\"section-head\"><div><h2>Historical fault ledger</h2><p>Only tickets where the mapped Device Fault field is populated are recorded here.</p></div><span>{faultHistory.length} faults</span></div>{faultHistory.length?<div className=\"table-wrap\"><table className=\"fault-table\"><thead><tr><th>Jira issue</th><th>Device fault</th><th>Issue created</th><th>Status when first recorded</th></tr></thead><tbody>{faultHistory.map((f)=><tr key={f.historyKey}><td><button className=\"issue-link\" onClick={()=>router.open(`/browse/${f.issueKey}`)}>{f.issueKey}</button></td><td>{f.fault}</td><td>{formatDate(f.issueCreated||f.firstSeen)}</td><td>{f.statusAtFirstSeen||'—'}</td></tr>)}</tbody></table></div>:<div className=\"empty-small\">No populated device faults recorded yet.</div>}</div><div className=\"card\"><h2>Activity</h2>{history.length ?";
 if(src.includes(activityCard)) src=src.replace(activityCard,ledgerCard);
 else if(!src.includes('Historical fault ledger')) throw new Error('Could not locate activity card for fault ledger.');
 
