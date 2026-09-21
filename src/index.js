@@ -11,7 +11,7 @@ const HISTORY_PREFIX = 'asset-history:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SYNC_KEY = 'sync:asset-manager:jira-field';
 const SYNC_PROGRESS_KEY = 'sync-progress:asset-manager:jira-field';
-const SYNC_JIRA_PAGE_SIZE = 100;
+const SYNC_JIRA_PAGE_SIZE = 25;
 
 const DEFAULT_SETTINGS = {
   assetTypes: ['Laptop', 'Desktop', 'Mobile', 'Tablet', 'Monitor', 'Printer', 'Accessory', 'Other'],
