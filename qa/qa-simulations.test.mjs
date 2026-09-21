@@ -27,6 +27,14 @@ test('backend retains critical Jira-sync and safety contracts', () => { assert.m
 test('configured Jira field is persisted separately from device name', () => { assert.match(backend,/jiraIdentifier/); assert.match(backend,/jiraIdentifierFieldId/); assert.match(backend,/jiraIdentifierFieldName/); assert.match(backend,/findAssetForJiraIdentifier/); assert.match(backend,/nameIndexKey\(identifier\)/); });
 test('Jira-discovered assets have deterministic ids without full-store lookup', () => { assert.match(backend,/makeJiraAssetId/); assert.match(backend,/createHash\('sha256'\)/); assert.match(backend,/id:makeJiraAssetId\(field\.id,identifier\)/); assert.match(backend,/findAssetForJiraIdentifier/); });
 test('large Jira discovery is resumable and bounded per Forge invocation', () => { assert.match(backend,/SYNC_PROGRESS_KEY/); assert.match(backend,/SYNC_JIRA_PAGE_SIZE\s*=\s*25/); assert.match(backend,/searchIssuePageWithConfiguredAssetField/); assert.match(backend,/nextPageToken:progress\?\.nextPageToken/); assert.match(backend,/else await kvs\.set\(SYNC_PROGRESS_KEY,progress\)/); assert.match(frontend,/while\(sync&&!sync\.complete&&guard<(?:50|800)\)/); assert.match(frontend,/Syncing Jira devices…/); });
+test('Jira project scope limits discovery and ticket history to one configured project', () => {
+  assert.match(backend,/jiraProjectKey/);
+  assert.match(backend,/project = \\"\$\{projectKey\}\\" AND/);
+  assert.match(backend,/jiraProjectKey:clean\(incoming\.jiraProjectKey\|\|''\)/);
+  assert.match(frontend,/Jira project to scan/);
+  assert.match(frontend,/getJiraProjects/);
+});
+
 test('Jira sync skips expensive manual uniqueness scan', () => { assert.match(backend,/source !== 'jira-sync'/); assert.match(backend,/assertUniqueDeviceName/); });
 test('reporting groups one Jira result set by device identifier', () => { assert.match(backend,/ticketsByIdentifier/); assert.match(backend,/const found=await searchIssuesWithConfiguredAssetField\(\)/); });
 test('metadata mappings use latest populated values', () => { assert.match(backend,/jiraLocationField/); assert.match(backend,/jiraTypeField/); assert.match(backend,/jiraCrewCodeField/); assert.match(backend,/latestFieldValueForIdentifier/); });
@@ -36,7 +44,7 @@ test('placeholder identifiers are rejected', () => { assert.match(backend,/valid
 test('configuration UI uses generic assignment-reference wording and save feedback', () => { assert.match(frontend,/Jira assignment reference field/); assert.match(frontend,/Assignment reference → holder mappings/); assert.match(frontend,/Saving…/); assert.match(frontend,/saveStage/); });
 test('configuration textareas preserve raw multiline editing until save', () => { assert.match(frontend,/assetTypesText/); assert.match(frontend,/statusesText/); assert.match(frontend,/locationsText/); assert.match(frontend,/crewMappingsText/); assert.match(frontend,/customFieldsText/); assert.match(frontend,/compileSettings/); });
 test('Jira discovery can be disabled while one-off scanning remains available', () => { assert.match(backend,/jiraDiscoveryEnabled:\s*true/); assert.match(backend,/jiraDiscoveryEnabled:incoming\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/Automatically scan and import assets from the mapped Jira Device ID field/); assert.match(frontend,/Scan & import Device IDs now/); assert.match(frontend,/cfg\.jiraAssetField\?\.id&&cfg\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/saved\.jiraAssetField\?\.id&&saved\.jiraDiscoveryEnabled!==false/); });
-test('asset register exposes latest primary or related ticket', () => { assert.match(backend,/latestFault:primary\[0\]\|\|related\[0\]/); assert.match(frontend,/report\?\.latestFault/); assert.match(frontend,/<th>Fault<\/th>/); });
+test('asset register exposes latest populated device fault only', () => { assert.match(backend,/const faults=primary\.filter\(t=>clean\(t\.fault\|\|''\)\)/); assert.match(backend,/latestFault:faults\[0\]\|\|null/); assert.match(frontend,/report\?\.latestFault/); assert.match(frontend,/<th>Fault<\/th>/); });
 
 test('Related Assets field is configurable and kept separate from primary Device ID', () => {
   assert.match(backend,/jiraRelatedAssetField:\s*null/);
@@ -58,7 +66,8 @@ test('related assets appear in history but stay out of primary fault totals', ()
   assert.match(backend,/ticketFields\(issue,'related'\)/);
   assert.match(backend,/const primary=tickets\.filter\(t=>t\.relation==='primary'\)/);
   assert.match(backend,/const related=tickets\.filter\(t=>t\.relation==='related'\)/);
-  assert.match(backend,/total:primary\.length/);
+  assert.match(backend,/const faults=primary\.filter\(t=>clean\(t\.fault\|\|''\)\)/);
+  assert.match(backend,/total:faults\.length/);
   assert.match(backend,/related:related\.length/);
   assert.match(frontend,/Primary faults/);
   assert.match(frontend,/Related tickets/);
