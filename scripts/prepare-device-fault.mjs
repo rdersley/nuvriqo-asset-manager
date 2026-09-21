@@ -84,6 +84,13 @@ for (const [from, to] of replacements) {
   src = src.replace(from, to);
 }
 
+// Reporting distinguishes "ticket involving the device" from an actual device fault.
+// Only primary tickets with a populated mapped Device Fault field count as faults.
+const oldFaultTotals="total:primary.length,related:related.length,involved:tickets.length,open,resolved:primary.length-open,lastFault:primary.find(t=>t.created)?.created||'',latestFault:primary[0]||related[0]||null";
+const newFaultTotals="total:faults.length,related:related.length,involved:tickets.length,open,resolved:faults.length-open,lastFault:faults.find(t=>t.created)?.created||'',latestFault:faults[0]||null";
+if (src.includes(oldFaultTotals)) src=src.replace(oldFaultTotals,newFaultTotals);
+else if (!src.includes(newFaultTotals)) throw new Error('Could not apply true Device Fault reporting totals.');
+
 // If the configured Device Fault field changes, remove data captured using the old mapping.
 // Ticket snapshots and fault-history rows are then rebuilt from Jira by the next scan using
 // the newly selected field, so an accidental mapping cannot remain in Asset Manager.
