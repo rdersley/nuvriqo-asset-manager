@@ -15,6 +15,15 @@ if (!backend.includes("resolver.define('listAssetsPage'")) {
   fs.writeFileSync(backendPath, backend);
 }
 
+if (!backend.includes("resolver.define('countAssetsPage'")) {
+  const marker = "resolver.define('listAssets',async({payload})=>";
+  const insertAt = backend.indexOf(marker);
+  if (insertAt < 0) throw new Error('Could not locate listAssets resolver for asset counting.');
+  const resolver = `resolver.define('countAssetsPage',async({payload})=>{\n  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));\n  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);\n  if(payload?.cursor)q=q.cursor(payload.cursor);\n  const page=await q.getMany();\n  return{count:page.results.length,nextCursor:page.nextCursor||null};\n});\n`;
+  backend = backend.slice(0, insertAt) + resolver + backend.slice(insertAt);
+  fs.writeFileSync(backendPath, backend);
+}
+
 // Patch the final UI preparation step so the Assets page loads a useful working set
 // immediately instead of trying to walk an entire 10k-20k register on every refresh.
 // The previous 200-page loop could consume the installation read budget and then clear
