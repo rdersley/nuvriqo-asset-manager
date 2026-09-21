@@ -84,4 +84,21 @@ for (const [from, to] of replacements) {
   src = src.replace(from, to);
 }
 
+// If the configured Device Fault field changes, remove data captured using the old mapping.
+// Ticket snapshots and fault-history rows are then rebuilt from Jira by the next scan using
+// the newly selected field, so an accidental mapping cannot remain in Asset Manager.
+if (!src.includes('Device Fault mapping changed; cleared cached ticket/fault data')) {
+  const saveNeedle = "resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};";
+  if (!src.includes(saveNeedle)) throw new Error('Could not locate saveSettings resolver for Device Fault mapping reset.');
+  src = src.replace(
+    saveNeedle,
+    saveNeedle + "const previousSettings=await getSettingsValue();"
+  );
+
+  const persistNeedle = "if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;await kvs.set(SETTINGS_KEY,settings);await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);return settings;});";
+  const persistReplacement = "if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;const previousFaultFieldId=clean(previousSettings?.jiraFaultField?.id||'');const nextFaultFieldId=clean(settings?.jiraFaultField?.id||'');if(previousFaultFieldId!==nextFaultFieldId){const cachedTickets=await queryAllByPrefix(ASSET_TICKET_PREFIX);for(const ticket of cachedTickets){if(ticket?.assetId&&ticket?.key&&ticket?.relation)await kvs.delete(\`\${ASSET_TICKET_PREFIX}\${ticket.assetId}:\${ticket.key}:\${ticket.relation}\`);}const faultHistory=await queryAllByPrefix(FAULT_HISTORY_PREFIX);for(const item of faultHistory){if(item?.historyKey)await kvs.delete(item.historyKey);}console.log('Device Fault mapping changed; cleared cached ticket/fault data');}await kvs.set(SETTINGS_KEY,settings);await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);return settings;});";
+  if (!src.includes(persistNeedle)) throw new Error('Could not locate saveSettings persistence for Device Fault mapping reset.');
+  src = src.replace(persistNeedle, persistReplacement);
+}
+
 fs.writeFileSync(path, src);
