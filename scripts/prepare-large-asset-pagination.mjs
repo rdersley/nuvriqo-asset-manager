@@ -24,13 +24,8 @@ let uiPrep = fs.readFileSync(uiPrepPath, 'utf8');
 const oldLoad = "    try{const assetRows=await invoke('listAssets',{query,status,type,location});setAssets(assetRows||[]);}catch(e){setAssets([]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
 const newLoad = "    try{let cursor=null,assetRows=[],guard=0,lastError=null;do{try{const page=await invoke('listAssetsPage',{query,status,type,location,cursor,limit:100});assetRows.push(...(page?.items||[]));cursor=page?.nextCursor||null;guard+=1;}catch(e){lastError=e;break;}}while(cursor&&guard<10);assetRows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));setAssets(assetRows);if(lastError&&assetRows.length)setMessage((m)=>m||'Showing loaded assets; more records are available but the current read window was reached. Refine the filters to narrow the register.');else if(lastError)setMessage((m)=>m||lastError?.message||'Could not load assets. Configuration is still available.');else if(cursor)setMessage((m)=>m||'Showing the first 1,000 matching records. Refine the filters to browse the rest of this large register safely.');}catch(e){setAssets((current)=>current?.length?current:[]);setMessage((m)=>m||e?.message||'Could not load assets. Configuration is still available.');}";
 if (!uiPrep.includes(newLoad)) {
-  if (uiPrep.includes(oldLoad)) {
-    uiPrep = uiPrep.replace(oldLoad, newLoad);
-  } else {
-    const priorPaged = /    try\{let cursor=null,assetRows=\[\],guard=0;do\{const page=await invoke\('listAssetsPage',[\s\S]*?Configuration is still available\.');\}/;
-    if (!priorPaged.test(uiPrep)) throw new Error('Could not locate Asset Manager asset load step.');
-    uiPrep = uiPrep.replace(priorPaged, newLoad);
-  }
+  if (!uiPrep.includes(oldLoad)) throw new Error('Could not locate Asset Manager asset load step.');
+  uiPrep = uiPrep.replace(oldLoad, newLoad);
   fs.writeFileSync(uiPrepPath, uiPrep);
 }
 
