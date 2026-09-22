@@ -37,11 +37,16 @@ function normaliseAsset(input = {}, existing = {}) {
 async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event }); }
 async function queryAllByPrefix(prefix) { const values = []; let cursor; do { let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100); if (cursor) query = query.cursor(cursor); const page = await query.getMany(); values.push(...page.results.map((e) => e.value)); cursor = page.nextCursor; } while (cursor); return values; }
 async function assertUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); const assets = await queryAllByPrefix(ASSET_PREFIX); const duplicate = assets.find((a) => a.id !== assetId && normaliseName(a.name) === normalized); if (duplicate) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
+async function assertIndexedUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
 async function saveOneAsset(supplied, source = 'manual') {
   if (!clean(supplied?.name)) throw new Error('Device name is required.');
   const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
   const asset = normaliseAsset(supplied, existing || {});
-  if (source !== 'jira-sync') await assertUniqueDeviceName(asset.name, asset.id);
+  if (source !== 'jira-sync') {
+    const fastImportSources=new Set(['bulk-import','import','import-reconcile']);
+    if(fastImportSources.has(source)) await assertIndexedUniqueDeviceName(asset.name,asset.id);
+    else await assertUniqueDeviceName(asset.name, asset.id);
+  }
   const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
   const newNameKey = nameIndexKey(asset.name);
   await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset);
