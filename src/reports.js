@@ -79,6 +79,16 @@ function groupCount(items, getter, fallback = 'Unspecified') {
   return [...map.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name)));
 }
 
+resolver.define('getReportingInventoryPage',async({payload})=>{
+  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));
+  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);
+  if(payload?.cursor)q=q.cursor(payload.cursor);
+  const page=await q.getMany();
+  const today=new Date(),in90=new Date(today.getTime()+90*86400000);
+  const rows=page.results.map(({value:a})=>{const expiry=a.warrantyExpiry?new Date(a.warrantyExpiry):null;const warrantyState=!expiry||Number.isNaN(expiry.getTime())?'Unknown':expiry<today?'Expired':expiry<=in90?'Expiring soon':'In warranty';const missing=[];if(!clean(a.serialNumber))missing.push('Serial number');if(!clean(a.type)||normalise(a.type)==='other')missing.push('Device type');if(!clean(a.location))missing.push('Location');if(!clean(a.assigneeName)&&!clean(a.crewCode))missing.push('Holder');if(!clean(a.client))missing.push('Client');return{id:a.id,name:a.name,deviceId:a.jiraIdentifier||'',type:a.type||'Other',manufacturer:a.manufacturer||'',model:a.model||'',serialNumber:a.serialNumber||'',holder:a.assigneeName||a.crewCode||'',assignmentReference:a.crewCode||'',status:a.status||'',location:a.location||'',client:a.client||'',organisations:clean(a.client)?[a.client]:[],purchaseDate:a.purchaseDate||'',warrantyExpiry:a.warrantyExpiry||'',warrantyState,missing,qualityIssues:missing.length,faults:null,openFaults:null,resolvedFaults:null,lastFault:'',latestFaultKey:'',faultDataLoaded:false};});
+  return{rows,nextCursor:page.nextCursor||null};
+});
+
 resolver.define('getReportingData', async () => {
   const { assets, truncated: assetsTruncated } = await reportAssets();
   const settings = { ...((await kvs.get(SETTINGS_KEY)) || {}) };
