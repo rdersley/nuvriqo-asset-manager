@@ -17,7 +17,7 @@ replaceOnce(
 
 if (!src.includes('placeholder="Client / organisation"')) {
   const from = "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Asset type<select";
-  const to = "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Client<input value={draft.client||''} onChange={(e) => update('client', e.target.value)} placeholder=\"Client / organisation\" /></label><label>Asset type<select";
+  const to = "<label>Device name *<input value={draft.name} onChange={(e) => update('name', e.target.value)} autoFocus /></label><label>Client<select value={draft.client||''} onChange={(e) => update('client', e.target.value)}><option value=\"\">Select client…</option>{[...new Set([...(clientOptions||[]),draft.client].filter(Boolean))].map(x=><option key={x} value={x}>{x}</option>)}</select></label><label>Asset type<select";
   if (!src.includes(from)) throw new Error('Could not locate asset form fields for Client.');
   src = src.replace(from, to);
 }
