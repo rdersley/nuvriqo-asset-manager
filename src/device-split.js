@@ -82,7 +82,7 @@ function detectDevices(text, assets, source = 'description') {
       });
     }
 
-    const tokenMatches = line.match(/\b[A-Z0-9]{2,}(?:[_-][A-Z0-9]{2,}){1,}\b/gi) || [];
+    const tokenMatches = line.match(/\b[A-Z0-9]{2,}(?:[_-][A-Z0-9]{1,}){1,}\b/gi) || [];
     for (const token of tokenMatches) {
       if (!isFallbackIdentifier(token)) continue;
       const key = normalise(token);
