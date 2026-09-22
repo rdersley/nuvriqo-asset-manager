@@ -41,6 +41,13 @@ test('reporting groups one Jira result set by device identifier', () => { assert
 test('metadata mappings use latest populated values', () => { assert.match(backend,/jiraLocationField/); assert.match(backend,/jiraTypeField/); assert.match(backend,/jiraCrewCodeField/); assert.match(backend,/latestFieldValueForIdentifier/); });
 test('assignment reference ownership works without Jira account', () => { assert.match(backend,/mappedCrewPerson/); assert.match(backend,/crewPerson\?\.displayName\|\|crewCode/); });
 test('manual holder entry stays free text', () => { assert.match(frontend,/Enter person, assignment reference, or search Jira/); assert.match(frontend,/invoke\('searchUsers'/); });
+test('ticket splitter detects device IDs with single-character suffixes', () => {
+  const splitter=fs.readFileSync(new URL('../src/device-split.js', import.meta.url),'utf8');
+  assert.match(splitter,/\[A-Z0-9\]\{1,\}/);
+  const matches='RYR_WM_7 RYR_WM_6 RYR_WM_69 RYR_STN_122 RYR_STN_117'.match(/\b[A-Z0-9]{2,}(?:[_-][A-Z0-9]{1,}){1,}\b/gi)||[];
+  assert.deepEqual(matches,['RYR_WM_7','RYR_WM_6','RYR_WM_69','RYR_STN_122','RYR_STN_117']);
+});
+
 test('placeholder identifiers are rejected', () => { assert.match(backend,/validIdentifier/); assert.match(backend,/autoDiscovered&&!validIdentifier\(identifier\)/); });
 test('configuration UI uses generic assignment-reference wording and save feedback', () => { assert.match(frontend,/Jira assignment reference field/); assert.match(frontend,/Assignment reference → holder mappings/); assert.match(frontend,/Saving…/); assert.match(frontend,/saveStage/); });
 test('configuration textareas preserve raw multiline editing until save', () => { assert.match(frontend,/assetTypesText/); assert.match(frontend,/statusesText/); assert.match(frontend,/locationsText/); assert.match(frontend,/crewMappingsText/); assert.match(frontend,/customFieldsText/); assert.match(frontend,/compileSettings/); });
