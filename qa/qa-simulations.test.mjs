@@ -12,6 +12,7 @@ const manifest = fs.readFileSync(new URL('../manifest.yml', import.meta.url), 'u
 const mainVite = fs.readFileSync(new URL('../static/vite.config.js', import.meta.url), 'utf8');
 const fieldVite = fs.readFileSync(new URL('../field-static/vite.config.js', import.meta.url), 'utf8');
 const panelVite = fs.readFileSync(new URL('../panel-static/vite.config.js', import.meta.url), 'utf8');
+const sdClientUiPrep = fs.readFileSync(new URL('../scripts/prepare-sd-client-ui.mjs', import.meta.url), 'utf8');
 
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const normaliseName = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
@@ -31,8 +32,8 @@ test('Jira project scope limits discovery and ticket history to one configured p
   assert.match(backend,/jiraProjectKey/);
   assert.match(backend,/const scope=projectKey/);
   assert.match(backend,/jiraProjectKey:clean\(incoming\.jiraProjectKey\|\|''\)/);
-  assert.match(frontend,/Jira project to scan/);
-  assert.match(frontend,/getJiraProjects/);
+  assert.match(sdClientUiPrep,/Jira project to scan/);
+  assert.match(sdClientUiPrep,/getJiraProjects/);
 });
 
 test('Jira sync skips expensive manual uniqueness scan', () => { assert.match(backend,/source !== 'jira-sync'/); assert.match(backend,/assertUniqueDeviceName/); });
