@@ -50,7 +50,7 @@ function ConfigurableAssetsTable({assets,settings,reportByAsset,query,setQuery,s
   const renderCell=(asset,key)=>{
     if(key==='name')return <><strong>{asset.name||'—'}</strong>{asset.jiraIdentifier&&asset.jiraIdentifier!==asset.name?<small style={{display:'block'}}>{asset.jiraIdentifier}</small>:null}</>;
     if(key==='status')return <span className="status-pill">{asset.status||'—'}</span>;
-    if(key==='fault'){const fault=reportByAsset.get(asset.id)?.latestFault;return fault?<><strong>{fault.key}</strong><small style={{display:'block'}}>{fault.relation==='related'?'Related · ':''}{fault.summary||'Ticket'} · {fault.status||'—'}</small></>:'—';}
+    if(key==='fault'){const fault=reportByAsset.get(asset.id)?.latestFault;return fault?<><strong>{fault.key}</strong><small style={{display:'block'}}>{fault.relation==='related'?'Related · ':''}{fault.fault||'—'} · {fault.status||'—'}</small></>:'—';}
     return valueFor(asset,key)||'—';
   };
   return <div className="nv-assets-card card">
