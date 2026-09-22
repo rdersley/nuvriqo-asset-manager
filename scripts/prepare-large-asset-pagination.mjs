@@ -19,7 +19,7 @@ if (!backend.includes("resolver.define('countAssetsPage'")) {
   const marker = "resolver.define('listAssets',async({payload})=>";
   const insertAt = backend.indexOf(marker);
   if (insertAt < 0) throw new Error('Could not locate listAssets resolver for asset counting.');
-  const resolver = `resolver.define('countAssetsPage',async({payload})=>{\n  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));\n  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);\n  if(payload?.cursor)q=q.cursor(payload.cursor);\n  const page=await q.getMany();\n  return{count:page.results.length,nextCursor:page.nextCursor||null};\n});\n`;
+  const resolver = `resolver.define('countAssetsPage',async({payload})=>{\n  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));\n  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);\n  if(payload?.cursor)q=q.cursor(payload.cursor);\n  const page=await q.getMany();\n  const items=page.results.map(e=>e.value);\n  const byType={};\n  for(const a of items){const key=clean(a?.type||'Other')||'Other';byType[key]=(byType[key]||0)+1;}\n  return{count:items.length,nextCursor:page.nextCursor||null,inUse:items.filter(a=>['In Use','Assigned','Active'].includes(a?.status)).length,available:items.filter(a=>a?.status==='Available').length,repair:items.filter(a=>['Repair','In Repair'].includes(a?.status)).length,byType};\n});\n`;
   backend = backend.slice(0, insertAt) + resolver + backend.slice(insertAt);
   fs.writeFileSync(backendPath, backend);
 }
