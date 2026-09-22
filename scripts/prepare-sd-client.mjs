@@ -112,4 +112,12 @@ if (!src.includes('history.filter(item=>ticketMatchesConfiguredProject(item,sett
   src = src.replace(from, to);
 }
 
+
+if (!src.includes("resolver.define('getJiraClientOptions'")) {
+  const marker = "resolver.define('getJiraProjects',async()=>getJiraProjects());";
+  if (!src.includes(marker)) throw new Error('Could not locate Jira project resolver for Client options resolver.');
+  const resolver = "resolver.define('getJiraClientOptions',async()=>{const settings=await getSettingsValue();const fieldId=clean(settings?.jiraClientField?.id||'');const values=new Set();if(fieldId){try{const contextsResponse=await api.asUser().requestJira(route\`/rest/api/3/field/\${fieldId}/context?maxResults=100\`,{headers:{Accept:'application/json'}});if(contextsResponse.ok){const contexts=await contextsResponse.json();for(const context of safeArray(contexts.values)){try{const optionsResponse=await api.asUser().requestJira(route\`/rest/api/3/field/\${fieldId}/context/\${context.id}/option?maxResults=100\`,{headers:{Accept:'application/json'}});if(!optionsResponse.ok)continue;const options=await optionsResponse.json();for(const option of safeArray(options.values)){const value=clean(option?.value||option?.name||'');if(value)values.add(value);}}catch{}}}}catch{}}if(!values.size){const assets=await queryAllByPrefix(ASSET_PREFIX,1000);for(const asset of assets){const value=clean(asset?.client||'');if(value)values.add(value);}}return [...values].sort((a,b)=>String(a).localeCompare(String(b),undefined,{sensitivity:'base'}));});";
+  src = src.replace(marker, marker + "\n" + resolver);
+}
+
 fs.writeFileSync(path, src);
