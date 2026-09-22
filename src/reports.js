@@ -4,6 +4,7 @@ import { kvs, WhereConditions } from '@forge/kvs';
 
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
+const ASSET_TICKET_PREFIX = 'asset-ticket:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const REPORT_ASSET_LIMIT = 500;
 const REPORT_ISSUE_LIMIT = 500;
@@ -78,6 +79,17 @@ function groupCount(items, getter, fallback = 'Unspecified') {
   }
   return [...map.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name)));
 }
+
+resolver.define('getReportingFaultPage',async({payload})=>{
+  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));
+  const settings={...((await kvs.get(SETTINGS_KEY))||{})};
+  const projectKey=clean(settings?.jiraProjectKey||'').toUpperCase();
+  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_TICKET_PREFIX)).limit(limit);
+  if(payload?.cursor)q=q.cursor(payload.cursor);
+  const page=await q.getMany();
+  const rows=page.results.map(({value:t})=>t).filter(t=>t?.assetId&&t?.relation==='primary'&&clean(t?.fault||'')&&(!projectKey||String(t?.key||'').toUpperCase().startsWith(projectKey+'-'))).map(t=>({assetId:t.assetId,key:t.key||'',fault:clean(t.fault||''),status:t.status||'',statusCategory:t.statusCategory||'',created:t.created||'',resolved:Boolean(t.resolved)||t.statusCategory==='done'}));
+  return{rows,nextCursor:page.nextCursor||null};
+});
 
 resolver.define('getReportingInventoryPage',async({payload})=>{
   const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));
