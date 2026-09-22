@@ -29,7 +29,7 @@ test('Jira-discovered assets have deterministic ids without full-store lookup', 
 test('large Jira discovery is resumable and bounded per Forge invocation', () => { assert.match(backend,/SYNC_PROGRESS_KEY/); assert.match(backend,/SYNC_JIRA_PAGE_SIZE\s*=\s*25/); assert.match(backend,/searchIssuePageWithConfiguredAssetField/); assert.match(backend,/nextPageToken:progress\?\.nextPageToken/); assert.match(backend,/else await kvs\.set\(SYNC_PROGRESS_KEY,progress\)/); assert.match(frontend,/while\(sync&&!sync\.complete&&guard<(?:50|800)\)/); assert.match(frontend,/Syncing Jira devices…/); });
 test('Jira project scope limits discovery and ticket history to one configured project', () => {
   assert.match(backend,/jiraProjectKey/);
-  assert.match(backend,/project = ["']?\$\{projectKey\}["']? AND/);
+  assert.match(backend,/const scope=projectKey/);
   assert.match(backend,/jiraProjectKey:clean\(incoming\.jiraProjectKey\|\|''\)/);
   assert.match(frontend,/Jira project to scan/);
   assert.match(frontend,/getJiraProjects/);
