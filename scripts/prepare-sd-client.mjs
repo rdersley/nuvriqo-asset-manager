@@ -116,7 +116,7 @@ if (!src.includes('history.filter(item=>ticketMatchesConfiguredProject(item,sett
 if (!src.includes("resolver.define('getJiraClientOptions'")) {
   const marker = "resolver.define('getJiraProjects',async()=>getJiraProjects());";
   if (!src.includes(marker)) throw new Error('Could not locate Jira project resolver for Client options resolver.');
-  const resolver = "resolver.define('getJiraClientOptions',async()=>{const values=new Set();let cursor=null,guard=0;do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();for(const entry of page.results){const value=clean(entry?.value?.client||'');if(value)values.add(value);}cursor=page.nextCursor||null;guard+=1;}while(cursor&&guard<50);return [...values].sort((a,b)=>String(a).localeCompare(String(b),undefined,{sensitivity:'base'}));});";
+  const resolver = "resolver.define('getJiraClientOptions',async()=>{const values=new Set();let cursor=null,guard=0;do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();for(const entry of safeArray(page?.results)){const value=clean(entry?.value?.client||'');if(value)values.add(value);}cursor=page?.nextCursor||null;guard+=1;}while(cursor&&guard<10);return [...values].sort((a,b)=>String(a).localeCompare(String(b),undefined,{sensitivity:'base'}));});";
   src = src.replace(marker, marker + "\n" + resolver);
 }
 
