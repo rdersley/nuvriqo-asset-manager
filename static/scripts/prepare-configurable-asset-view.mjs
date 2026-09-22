@@ -78,5 +78,24 @@ if (start >= 0) {
   throw new Error('Could not locate existing Asset list view.');
 }
 
+if (!src.includes('estateOverview')) {
+  const appMarker = 'function App() {';
+  const stateBlock = `function App() {
+  const [estateOverview,setEstateOverview]=useState(null);
+  useEffect(()=>{let cancelled=false;const run=async()=>{try{let cursor=null,total=0,inUse=0,available=0,repair=0,guard=0;const byType={};do{const page=await invoke('countAssetsPage',{cursor,limit:100});total+=Number(page?.count||0);inUse+=Number(page?.inUse||0);available+=Number(page?.available||0);repair+=Number(page?.repair||0);for(const [k,v] of Object.entries(page?.byType||{}))byType[k]=(byType[k]||0)+Number(v||0);cursor=page?.nextCursor||null;guard+=1;}while(cursor&&guard<500&&!cancelled);if(!cancelled)setEstateOverview({total,inUse,available,repair,byType});}catch{if(!cancelled)setEstateOverview(null);}};run();return()=>{cancelled=true;};},[]);`;
+  if (!src.includes(appMarker)) throw new Error('Could not locate App for full-estate overview metrics.');
+  src = src.replace(appMarker, stateBlock);
+
+  const statsNeedle = "const stats=useMemo(()=>{const inUse=assets.filter(a=>['In Use','Assigned','Active'].includes(a.status)).length,available=assets.filter(a=>a.status==='Available').length,repair=assets.filter(a=>['Repair','In Repair'].includes(a.status)).length,openFaults=reportRows.reduce((sum,r)=>sum+(r.open||0),0);return{total:assets.length,inUse,available,repair,openFaults};},[assets,reportRows]);";
+  const statsReplacement = "const stats=useMemo(()=>{const localInUse=assets.filter(a=>['In Use','Assigned','Active'].includes(a.status)).length,localAvailable=assets.filter(a=>a.status==='Available').length,localRepair=assets.filter(a=>['Repair','In Repair'].includes(a.status)).length,openFaults=reportRows.reduce((sum,r)=>sum+(r.open||0),0);return{total:estateOverview?.total??assets.length,inUse:estateOverview?.inUse??localInUse,available:estateOverview?.available??localAvailable,repair:estateOverview?.repair??localRepair,openFaults};},[assets,reportRows,estateOverview]);";
+  if (!src.includes(statsNeedle)) throw new Error('Could not locate overview stats calculation.');
+  src = src.replace(statsNeedle, statsReplacement);
+
+  const typeNeedle = "const typeGroups=useMemo(()=>Object.entries(assets.reduce((acc,a)=>{const key=a.type||'Other';acc[key]=(acc[key]||0)+1;return acc;},{})).sort((a,b)=>b[1]-a[1]).slice(0,5),[assets]);";
+  const typeReplacement = "const typeGroups=useMemo(()=>Object.entries(estateOverview?.byType||assets.reduce((acc,a)=>{const key=a.type||'Other';acc[key]=(acc[key]||0)+1;return acc;},{})).sort((a,b)=>b[1]-a[1]).slice(0,5),[assets,estateOverview]);";
+  if (!src.includes(typeNeedle)) throw new Error('Could not locate overview type grouping.');
+  src = src.replace(typeNeedle, typeReplacement);
+}
+
 fs.writeFileSync(path, src);
 console.log('Prepared configurable Asset columns and filters.');
