@@ -22,11 +22,20 @@ if (!src.includes('placeholder="Client / organisation"')) {
   src = src.replace(from, to);
 }
 
-replaceOnce(
-  'client settings state',
-  "jiraAssetField:null,jiraRelatedAssetField:null,jiraLocationField:null",
-  "jiraAssetField:null,jiraRelatedAssetField:null,jiraClientField:null,jiraLocationField:null"
-);
+if (!src.includes('jiraClientField:null')) {
+  if (src.includes("jiraAssetField:null,jiraRelatedAssetField:null,jiraProjectKey:'',jiraLocationField:null")) {
+    src = src.replace(
+      "jiraAssetField:null,jiraRelatedAssetField:null,jiraProjectKey:'',jiraLocationField:null",
+      "jiraAssetField:null,jiraRelatedAssetField:null,jiraClientField:null,jiraProjectKey:'',jiraLocationField:null"
+    );
+  } else {
+    replaceOnce(
+      'client settings state',
+      "jiraAssetField:null,jiraRelatedAssetField:null,jiraLocationField:null",
+      "jiraAssetField:null,jiraRelatedAssetField:null,jiraClientField:null,jiraLocationField:null"
+    );
+  }
+}
 
 const locationMapping = "{fieldSelect('Jira location field','jiraLocationField','Optional. The latest matching ticket updates the asset location.')}";
 const clientMapping = "{fieldSelect('Jira client field','jiraClientField','Optional. Map your SD Client custom field here. The newest populated value for each Device ID is stored against the asset.')}";
