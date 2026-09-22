@@ -91,4 +91,25 @@ if (src.includes("const previousFaultFieldId=clean(previousSettings?.jiraFaultFi
   );
 }
 
+if (!src.includes('ticketMatchesConfiguredProject')) {
+  const marker = "async function getSettingsValue(){";
+  if (!src.includes(marker)) throw new Error('Could not locate settings helper for project ticket filter.');
+  const helper = "function ticketMatchesConfiguredProject(ticket,settings){const projectKey=clean(settings?.jiraProjectKey||'').toUpperCase();if(!projectKey)return true;const key=clean(ticket?.key||ticket?.issueKey||'').toUpperCase();return key.startsWith(projectKey+'-');}\n";
+  src = src.replace(marker, helper + marker);
+}
+
+if (!src.includes('recorded.filter(ticket=>ticketMatchesConfiguredProject(ticket,settings))')) {
+  const from = "resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const recorded=await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`);const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId).map(l=>l.issueKey).filter(Boolean);if(recorded.length){const byKey=new Map();for(const ticket of recorded){";
+  const to = "resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const settings=await getSettingsValue();const recorded=(await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`)).filter(ticket=>ticketMatchesConfiguredProject(ticket,settings));const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId&&ticketMatchesConfiguredProject({key:l.issueKey},settings)).map(l=>l.issueKey).filter(Boolean);if(recorded.length){const byKey=new Map();for(const ticket of recorded){";
+  if (!src.includes(from)) throw new Error('Could not locate getAssetTickets resolver for project filtering.');
+  src = src.replace(from, to);
+}
+
+if (!src.includes('history.filter(item=>ticketMatchesConfiguredProject(item,settings))')) {
+  const from = "resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`);return history.sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});";
+  const to = "resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const settings=await getSettingsValue();const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`);return history.filter(item=>ticketMatchesConfiguredProject(item,settings)).sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});";
+  if (!src.includes(from)) throw new Error('Could not locate getFaultHistory resolver for project filtering.');
+  src = src.replace(from, to);
+}
+
 fs.writeFileSync(path, src);
