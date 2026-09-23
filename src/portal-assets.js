@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { createHash } from 'node:crypto';
+import { buildPortalPlusAssetModule } from './portal-plus-provider.js';
 
 const resolver = new Resolver();
 const SETTINGS_KEY = 'settings:asset-manager';
@@ -47,22 +48,19 @@ function findOrganizationsField(fields) {
   }) || null;
 }
 
-async function currentCustomerOrganizations() {
-  const organisations = [];
-  let start = 0;
-  for (let guard = 0; guard < 50; guard += 1) {
-    const response = await api.asUser().requestJira(route`/rest/servicedeskapi/organization?start=${start}&limit=100`, { headers: { Accept: 'application/json' } });
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) return [];
-      throw new Error(`Could not load your Jira Service Management organisations (${response.status}).`);
-    }
-    const data = await response.json();
-    const values = safeArray(data.values);
-    organisations.push(...values.map((org) => ({ id: String(org.id || ''), name: clean(org.name || '') })).filter((org) => org.id && org.name));
-    if (data.isLastPage !== false || !values.length) break;
-    start += values.length;
+async function currentCustomerOrganizations(context) {
+  const accountId = String(context?.accountId || '');
+  if (!accountId) return [];
+  const params = new URLSearchParams();
+  params.set('limit', '100');
+  params.set('accountId', accountId);
+  const response = await api.asApp().requestJira(route`/rest/servicedeskapi/organization?${params}`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) return [];
+    throw new Error(`Could not load your Jira Service Management organisations (${response.status}).`);
   }
-  return organisations;
+  const data = await response.json();
+  return safeArray(data.values).map((org) => ({ id: String(org.id || ''), name: clean(org.name || '') })).filter((org) => org.id && org.name);
 }
 
 function escapeJql(value) {
@@ -105,11 +103,11 @@ async function assetForIdentifier(deviceFieldId, identifier) {
   return null;
 }
 
-resolver.define('getPortalAssets', async () => {
+async function portalAssetsForContext(context) {
   const settings = await getSettings();
   if (!settings.jiraAssetField?.id) return { organisations: [], assets: [], configured: false, reason: 'Asset Manager has not been mapped to a Jira Device ID field yet.' };
 
-  const organisations = await currentCustomerOrganizations();
+  const organisations = await currentCustomerOrganizations(context);
   if (!organisations.length) return { organisations: [], assets: [], configured: true, reason: 'Your portal account is not a member of a Jira Service Management organisation.' };
 
   const fields = await getFields();
@@ -142,6 +140,12 @@ resolver.define('getPortalAssets', async () => {
 
   const assets = [...visible.values()].sort((a, b) => String(a.deviceId).localeCompare(String(b.deviceId), undefined, { sensitivity: 'base' }));
   return { organisations, assets, configured: true, organisationField: { id: organisationField.id, name: organisationField.name } };
+}
+
+resolver.define('getPortalAssets', async ({ context }) => portalAssetsForContext(context));
+resolver.define('getPortalPlusModule', async ({ context }) => {
+  const result = await portalAssetsForContext(context);
+  return buildPortalPlusAssetModule(result);
 });
 
 export const handler = resolver.getDefinitions();
