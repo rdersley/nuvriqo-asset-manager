@@ -22,6 +22,12 @@ if (!src.includes('placeholder="Client / organisation"')) {
   src = src.replace(from, to);
 }
 
+if (!src.includes('clientOptions,setClientOptions')) {
+  const target = "const [draft, setDraft] = useState({ ...emptyAsset, ...asset }); useEffect(() => setDraft({ ...emptyAsset, ...asset }), [asset]); const update = (field, value) => setDraft((prev) => ({ ...prev, [field]: value }));";
+  const replacement = "const [draft, setDraft] = useState({ ...emptyAsset, ...asset }); const [clientOptions,setClientOptions]=useState([]); useEffect(() => setDraft({ ...emptyAsset, ...asset }), [asset]); useEffect(()=>{invoke('getJiraClientOptions').then(rows=>setClientOptions(rows||[])).catch(()=>setClientOptions([]));},[]); const update = (field, value) => setDraft((prev) => ({ ...prev, [field]: value }));";
+  if (src.includes(target)) src = src.replace(target, replacement);
+}
+
 if (!src.includes('jiraClientField:null')) {
   if (src.includes("jiraAssetField:null,jiraRelatedAssetField:null,jiraProjectKey:'',jiraLocationField:null")) {
     src = src.replace(
