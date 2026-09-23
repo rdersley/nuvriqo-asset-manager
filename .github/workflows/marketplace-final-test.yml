@@ -1,0 +1,92 @@
+name: Asset Manager Marketplace Final Test
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/marketplace-final-test.yml'
+  workflow_dispatch:
+
+jobs:
+  final-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      FORGE_ENVIRONMENT: staging
+      FORGE_SITE: nuvriqo.atlassian.net
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts
+
+      - name: Install public UI dependencies
+        run: |
+          npm --prefix static install
+          npm --prefix field-static install
+          npm --prefix panel-static install
+          npm --prefix split-static install
+          npm --prefix portal-static install
+
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli@latest
+
+      - name: Disable Forge usage analytics
+        run: forge settings set usage-analytics false
+
+      - name: Prepare public release candidate
+        run: |
+          node scripts/prepare-device-fault.mjs
+          node scripts/prepare-sd-client.mjs
+          node scripts/prepare-device-id-validation.mjs
+          node scripts/prepare-bulk-cleanup.mjs
+          node scripts/prepare-import-reconciliation.mjs
+          node scripts/prepare-large-asset-pagination.mjs
+          node scripts/prepare-scale-guards.mjs
+
+      - name: Verify Marketplace-safe manifest
+        run: npm run verify:marketplace
+
+      - name: Check public resolver syntax
+        run: |
+          node --check src/index.js
+          node --check src/ticket-sync.js
+          node --check src/issue-panel.js
+          node --check src/device-split.js
+          node --check src/portal-assets.js
+
+      - name: Run public tests
+        run: |
+          npm --prefix static test
+          npm run qa:test
+
+      - name: Build Marketplace UIs
+        run: npm run build:marketplace
+
+      - name: Switch to Marketplace manifest
+        run: cp manifest.marketplace.yml manifest.yml
+
+      - name: Forge lint Marketplace descriptor
+        run: forge lint
+
+      - name: Deploy Marketplace candidate to Forge staging
+        run: forge deploy --environment "$FORGE_ENVIRONMENT" --approve MAJOR_VERSION_RULE --non-interactive
+
+      - name: Install or upgrade Marketplace candidate on Nuvriqo site
+        shell: bash
+        run: |
+          if forge install --upgrade all --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive; then
+            echo "Existing Nuvriqo staging installation upgraded successfully."
+          else
+            echo "No upgradeable staging installation found; attempting first install."
+            forge install --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive
+          fi
