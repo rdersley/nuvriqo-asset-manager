@@ -44,9 +44,22 @@ jobs:
           node scripts/prepare-sd-client.mjs
           node scripts/prepare-device-id-validation.mjs
           node scripts/prepare-bulk-cleanup.mjs
+          node scripts/prepare-import-reconciliation.mjs
+          node scripts/prepare-large-asset-pagination.mjs
           node scripts/prepare-scale-guards.mjs
       - name: Verify Marketplace release manifest
         run: npm run verify:marketplace
+      - name: Check public resolver syntax
+        run: |
+          node --check src/index.js
+          node --check src/ticket-sync.js
+          node --check src/issue-panel.js
+          node --check src/device-split.js
+          node --check src/portal-assets.js
+      - name: Run public regression tests
+        run: |
+          npm --prefix static test
+          npm run qa:test
       - name: Build Marketplace UIs
         run: npm run build:marketplace
       - name: Switch to Marketplace-safe manifest
