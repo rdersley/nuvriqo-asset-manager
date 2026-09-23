@@ -120,6 +120,7 @@ permissions:
     - storage:app
     - read:jira-work
     - write:jira-work
+    - manage:jira-project
     - read:jira-user
     - read:user:jira
     - read:avatar:jira
