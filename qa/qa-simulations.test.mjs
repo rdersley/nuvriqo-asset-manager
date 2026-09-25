@@ -38,7 +38,7 @@ test('Jira project scope limits discovery and ticket history to one configured p
 });
 
 test('Jira sync skips expensive manual uniqueness scan', () => { assert.match(backend,/source !== 'jira-sync'/); assert.match(backend,/assertUniqueDeviceName/); });
-test('reporting groups targeted Jira results by device identifier', () => { assert.match(backend,/ticketsByIdentifier/); assert.match(backend,/const found=await searchIssuesForIdentifiers\(identifiers\.slice\(i,i\+REPORT_IDENTIFIER_CHUNK\)\)/); });
+test('reporting groups targeted Jira results by device identifier', () => { assert.match(backend,/ticketsByIdentifier/); assert.match(backend,/const found=await searchIssuesForIdentifiers\(identifiers\.slice\(i,i\+REPORT_IDENTIFIER_CHUNK\),known\)/); });
 test('metadata mappings use latest populated values', () => { assert.match(backend,/jiraLocationField/); assert.match(backend,/jiraTypeField/); assert.match(backend,/jiraCrewCodeField/); assert.match(backend,/latestFieldValueForIdentifier/); });
 test('assignment reference ownership works without Jira account', () => { assert.match(backend,/mappedCrewPerson/); assert.match(backend,/crewPerson\?\.displayName\|\|crewCode/); });
 test('manual holder entry stays free text', () => { assert.match(frontend,/Enter person, assignment reference, or search Jira/); assert.match(frontend,/invoke\('searchUsers'/); });
