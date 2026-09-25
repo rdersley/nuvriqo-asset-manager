@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@forge/bridge';
+import { downloadCsv } from '../../shared/csv.js';
 
 const fmtDate=(v)=>v?new Date(v).toLocaleDateString():'—';
-const esc=(v)=>{const s=String(v??'');return /[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s;};
-function downloadCsv(name,headers,rows){const csv=[headers,...rows].map(r=>r.map(esc).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);}
 function groupCount(items,getter,fallback='Unspecified'){const map=new Map();for(const item of items){const key=String(getter(item)||'').trim()||fallback;map.set(key,(map.get(key)||0)+1);}return [...map.entries()].map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));}
 async function loadReportingData(){
  const [assets,reports]=await Promise.all([invoke('listAssets',{}),invoke('getAssetReport')]);

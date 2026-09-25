@@ -3,12 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { invoke, requestJira } from '@forge/bridge';
 import './styles.css';
 import './reports.css';
+import { downloadCsv } from '../../shared/csv.js';
 
 const normalise=(v)=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
 const formatDate=(v)=>v?new Date(v).toLocaleDateString():'—';
 const fieldValues=(value)=>{if(value==null)return[];if(Array.isArray(value))return value.flatMap(fieldValues);if(typeof value==='string'||typeof value==='number')return[String(value).trim()].filter(Boolean);if(typeof value==='object'){const candidate=value.value??value.name??value.label??value.displayName??value.objectKey??value.key;return candidate?[String(candidate).trim()]:[];}return[];};
-function csvEscape(value){const text=String(value??'');return /[",\n]/.test(text)?`"${text.replaceAll('"','""')}"`:text;}
-function downloadCsv(filename,headers,rows){const csv=[headers,...rows].map(r=>r.map(csvEscape).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);}
 function countBy(rows,getter,blank='Unspecified'){const map=new Map();for(const row of rows){const value=String(getter(row)||'').trim()||blank;map.set(value,(map.get(value)||0)+1);}return [...map.entries()].map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));}
 function warrantyState(asset){if(!asset.warrantyExpiry)return'No warranty date';const expiry=new Date(asset.warrantyExpiry);if(Number.isNaN(expiry.getTime()))return'Invalid warranty date';const days=Math.ceil((expiry-Date.now())/86400000);if(days<0)return'Expired';if(days<=90)return'Expiring within 90 days';return'Current';}
 function qualityFlags(asset){const flags=[];if(!asset.serialNumber)flags.push('Missing serial number');if(!asset.type||normalise(asset.type)==='other')flags.push('Missing/specific device type');if(!asset.location)flags.push('Missing location');if(!asset.assigneeName&&!asset.crewCode)flags.push('Unassigned');if(!asset.jiraIdentifier)flags.push('No Jira Device ID');return flags;}

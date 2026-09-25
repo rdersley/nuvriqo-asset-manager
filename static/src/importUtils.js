@@ -22,7 +22,9 @@ const normaliseName = (value) => String(value ?? '').trim().toLowerCase().replac
 
 function cellValue(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
-  return value == null ? '' : String(value).trim();
+  if (value == null) return '';
+  // Undo the apostrophe CSV export adds in front of formula-like text.
+  return String(value).replace(/^'(?=[=+\-@\t\r])/, '').trim();
 }
 
 function customFieldMap(customFields = []) {
@@ -79,7 +81,7 @@ function parseCsvRows(text) {
 
 export async function readAssetImportFile(file, customFields = []) {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.csv')) return rowsToAssets(parseCsvRows(await file.text()), customFields);
+  if (lower.endsWith('.csv')) return rowsToAssets(parseCsvRows((await file.text()).replace(/^﻿/, '')), customFields);
   if (lower.endsWith('.xlsx')) return rowsToAssets(await readSheet(file), customFields);
   throw new Error('Please choose a CSV or Excel .xlsx file.');
 }

@@ -2,10 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke } from '@forge/bridge';
 import './styles.css';
+import { downloadCsv } from '../../shared/csv.js';
 
 const fmtDate=(v)=>v?new Date(v).toLocaleDateString():'—';
-const esc=(v)=>{const s=String(v??'');return /[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s;};
-function downloadCsv(name,headers,rows){const csv=[headers,...rows].map(r=>r.map(esc).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);}
 function GroupTable({title,rows}){return <div className="card"><h2>{title}</h2><table><thead><tr><th>Name</th><th>Assets</th></tr></thead><tbody>{rows.slice(0,20).map(r=><tr key={r.name}><td>{r.name}</td><td>{r.count}</td></tr>)}</tbody></table></div>}
 
 function App(){
