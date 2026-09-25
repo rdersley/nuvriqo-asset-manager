@@ -1,4 +1,4 @@
-import { invoke } from '@forge/bridge';
+import { invoke } from './invoke.js';
 
 // getAssetReport handles at most this many assets per call (REPORT_BATCH in src/index.js).
 const BATCH = 100;

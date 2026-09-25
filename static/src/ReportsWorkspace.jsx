@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke } from './invoke.js';
 import { downloadCsv } from '../../shared/csv.js';
 import { loadFullReport } from './reportData';
 

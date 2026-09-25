@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { invoke, requestJira } from '@forge/bridge';
+import { requestJira } from '@forge/bridge';
+import { invoke } from './invoke.js';
 import './styles.css';
 import './reports.css';
 import { loadFullReport } from './reportData';

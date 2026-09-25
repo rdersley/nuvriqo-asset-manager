@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { invoke, router, view } from '@forge/bridge';
+import { router, view } from '@forge/bridge';
+import { invoke } from './invoke.js';
 import ImportDialog from './ImportDialog';
 import ReportsWorkspace from './ReportsWorkspace';
 import { loadReportRows } from './reportData';
