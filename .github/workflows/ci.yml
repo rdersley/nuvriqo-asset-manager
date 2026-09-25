@@ -33,8 +33,6 @@ jobs:
         run: npm --prefix split-static install
       - name: Install Customer portal UI dependencies
         run: npm --prefix portal-static install
-      - name: Install Reports UI dependencies
-        run: npm --prefix reports-static install
       - name: Install Internal Asset Operations UI dependencies
         run: npm --prefix crew-static install
       - name: Install Forge CLI
@@ -50,7 +48,6 @@ jobs:
           node --check src/issue-panel.js
           node --check src/device-split.js
           node --check src/portal-assets.js
-          node --check src/reports.js
           node --check src/crew.js
       - name: Run import validation tests
         run: npm --prefix static test
@@ -66,8 +63,6 @@ jobs:
         run: npm --prefix split-static run build
       - name: Build Customer portal UI
         run: npm --prefix portal-static run build
-      - name: Build Reports UI
-        run: npm --prefix reports-static run build
       - name: Build Internal Asset Operations UI
         run: npm --prefix crew-static run build
       - name: Forge lint
@@ -136,8 +131,6 @@ jobs:
         run: npm --prefix split-static install
       - name: Install Customer portal UI dependencies
         run: npm --prefix portal-static install
-      - name: Install Reports UI dependencies
-        run: npm --prefix reports-static install
       - name: Install Internal Asset Operations UI dependencies
         run: npm --prefix crew-static install
       - name: Verify Marketplace-safe manifest
@@ -152,8 +145,6 @@ jobs:
         run: npm --prefix split-static run build
       - name: Build Customer portal UI
         run: npm --prefix portal-static run build
-      - name: Build Reports UI
-        run: npm --prefix reports-static run build
       - name: Build Internal Asset Operations UI
         run: npm --prefix crew-static run build
       - name: Install Forge CLI

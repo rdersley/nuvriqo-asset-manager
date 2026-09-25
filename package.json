@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "postinstall": "npm run install:ui",
-    "install:ui": "npm --prefix static install && npm --prefix field-static install && npm --prefix panel-static install && npm --prefix split-static install && npm --prefix portal-static install && npm --prefix reports-static install && npm --prefix crew-static install",
-    "build": "npm --prefix static run build && npm --prefix field-static run build && npm --prefix panel-static run build && npm --prefix split-static run build && npm --prefix portal-static run build && npm --prefix reports-static run build && npm --prefix crew-static run build",
+    "install:ui": "npm --prefix static install && npm --prefix field-static install && npm --prefix panel-static install && npm --prefix split-static install && npm --prefix portal-static install && npm --prefix crew-static install",
+    "build": "npm --prefix static run build && npm --prefix field-static run build && npm --prefix panel-static run build && npm --prefix split-static run build && npm --prefix portal-static run build && npm --prefix crew-static run build",
     "build:marketplace": "npm --prefix static run build && npm --prefix field-static run build && npm --prefix panel-static run build && npm --prefix split-static run build && npm --prefix portal-static run build",
     "test": "npm --prefix static test",
     "qa:test": "node --test --experimental-test-module-mocks qa/qa-simulations.test.mjs qa/auth.test.mjs qa/bulk-remove.test.mjs qa/csv.test.mjs qa/truncation.test.mjs static/src/reportData.test.mjs",
@@ -13,7 +13,7 @@
     "qa:browser": "playwright test qa/browser-sandbox.spec.mjs",
     "qa": "npm test && npm run qa:test",
     "verify:marketplace": "node scripts/verify-marketplace-release.mjs",
-    "validate": "node --check src/auth.js && node --check src/index.js && node --check src/ticket-sync.js && node --check src/issue-panel.js && node --check src/device-split.js && node --check src/portal-assets.js && node --check src/reports.js && node --check src/crew.js && npm run qa && npm run build && npm run verify:marketplace"
+    "validate": "node --check src/auth.js && node --check src/index.js && node --check src/ticket-sync.js && node --check src/issue-panel.js && node --check src/device-split.js && node --check src/portal-assets.js && node --check src/crew.js && npm run qa && npm run build && npm run verify:marketplace"
   },
   "dependencies": {
     "@forge/api": "^5.0.0",

@@ -94,8 +94,6 @@ modules:
       handler: device-split.handler
     - key: portal-assets
       handler: portal-assets.handler
-    - key: reports
-      handler: reports.handler
     - key: crew-tracking
       handler: crew.handler
 
@@ -110,8 +108,6 @@ resources:
     path: field-static/dist
   - key: portal-assets
     path: portal-static/dist
-  - key: reports
-    path: reports-static/dist
   - key: crew-tracking
     path: crew-static/dist
 
