@@ -1,6 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import { createHash } from 'node:crypto';
 
 const resolver = new Resolver();
 const ASSET_PREFIX = 'asset:';
@@ -9,6 +10,9 @@ const SETTINGS_KEY = 'settings:asset-manager';
 const HISTORY_PREFIX = 'asset-history:';
 const SEARCH_LIMIT = 50;
 const SEARCH_PAGE_SIZE = 100;
+// Substring search scans at most this many pages (2,000 assets); exact Device Name or
+// Jira Device ID matches are found by key regardless of register size.
+const SEARCH_MAX_PAGES = 20;
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const now = () => new Date().toISOString();
 const normalise = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
@@ -73,11 +77,15 @@ function toSearchResult(asset) {
   return { id:asset.id,name:asset.name,identifier:asset.jiraIdentifier||asset.name,type:asset.type||'',manufacturer:asset.manufacturer||'',model:asset.model||'',location:asset.location||'',assignmentReference:asset.crewCode||'',holder:asset.assigneeName||asset.crewCode||'',status:asset.status||'',serialNumber:asset.serialNumber||'' };
 }
 
+// Must match makeJiraAssetId in src/index.js.
+const jiraAssetId = (fieldId, identifier) => `AST-JIRA-${createHash('sha256').update(`${fieldId}:${normalise(identifier)}`).digest('hex').slice(0, 24).toUpperCase()}`;
+
 async function exactIndexedAsset(query) {
   if (!query) return null;
   const index = await kvs.get(nameIndexKey(query));
-  if (!index?.assetId) return null;
-  return (await kvs.get(`${ASSET_PREFIX}${index.assetId}`)) || null;
+  if (index?.assetId) { const byName = await kvs.get(`${ASSET_PREFIX}${index.assetId}`); if (byName) return byName; }
+  const fieldId = (await settings()).jiraAssetField?.id;
+  return fieldId ? (await kvs.get(`${ASSET_PREFIX}${jiraAssetId(fieldId, query)}`)) || null : null;
 }
 
 async function searchAssets(query) {
@@ -105,7 +113,7 @@ async function searchAssets(query) {
     }
     if (results.length >= SEARCH_LIMIT) break;
     cursor = page.nextCursor;
-  } while (cursor && pages < 5);
+  } while (cursor && pages < SEARCH_MAX_PAGES);
 
   return results
     .sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'}))

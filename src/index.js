@@ -24,6 +24,7 @@ async function markCuratedFromHistory(asset) {
 }
 const ASSET_PREFIX = 'asset:';
 const ASSET_NAME_PREFIX = 'asset-name:';
+const CLIENT_INDEX_PREFIX = 'asset-client:';
 const LINK_PREFIX = 'issue-link:';
 const ASSET_TICKET_PREFIX = 'asset-ticket:';
 const HISTORY_PREFIX = 'asset-history:';
@@ -80,6 +81,7 @@ async function saveOneAsset(supplied, source = 'manual') {
   const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
   const newNameKey = nameIndexKey(asset.name);
   await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset);
+  if (clean(asset.client)) await kvs.set(`${CLIENT_INDEX_PREFIX}${Buffer.from(normaliseName(asset.client), 'utf8').toString('base64url')}`, { client: clean(asset.client) });
   await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt });
   if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey);
   if (!existing) await addHistory(asset.id, { type: 'created', source, message: source === 'jira-sync' ? 'Asset discovered from Jira' : 'Asset created' });
@@ -152,38 +154,6 @@ function issueMatchesIdentifier(issue, fieldId, identifier){const target=normali
 function issueMatchesRelatedIdentifier(issue, fieldId, identifier){if(!fieldId||!validIdentifier(identifier))return false;const target=normaliseName(identifier);return relatedIdentifiers(issue.fields?.[fieldId]).some(v=>normaliseName(v)===target);}
 function latestFieldValueForIdentifier(issues, identifierFieldId, identifier, valueFieldId){if(!valueFieldId||!validIdentifier(identifier))return'';for(const issue of issues){if(!issueMatchesIdentifier(issue,identifierFieldId,identifier))continue;const value=fieldValues(issue.fields?.[valueFieldId])[0]||'';if(value)return value;}return'';}
 function mappedCrewPerson(settings,crewCode){const target=normaliseName(crewCode);return safeArray(settings.crewMappings).find(m=>normaliseName(m.crewCode)===target)||null;}
-async function reconcileJiraAssets(){
-  const assets=await queryAllByPrefix(ASSET_PREFIX);
-  const links=await queryAllByPrefix(LINK_PREFIX);
-  const groups=new Map();
-  let removed=0;
-  for(const asset of assets){
-    const autoDiscovered=String(asset.notes||'').startsWith('Discovered automatically from Jira field');
-    const identifier=asset.jiraIdentifier||asset.name||'';
-    if(autoDiscovered&&!validIdentifier(identifier)){
-      await kvs.delete(`${ASSET_PREFIX}${asset.id}`);
-      if(asset.name){const indexed=await kvs.get(nameIndexKey(asset.name));if(indexed?.assetId===asset.id)await kvs.delete(nameIndexKey(asset.name));}
-      removed+=1;continue;
-    }
-    if(!validIdentifier(asset.jiraIdentifier))continue;
-    const key=normaliseName(asset.jiraIdentifier);
-    if(!groups.has(key))groups.set(key,[]);
-    groups.get(key).push(asset);
-  }
-  for(const group of groups.values()){
-    if(group.length<2)continue;
-    group.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));
-    const canonical=group[0];
-    for(const duplicate of group.slice(1)){
-      for(const link of links.filter(l=>l?.assetId===duplicate.id)){await kvs.set(`${LINK_PREFIX}${link.issueKey}`,{...link,assetId:canonical.id,deviceName:canonical.name});}
-      await kvs.delete(`${ASSET_PREFIX}${duplicate.id}`);
-      removed+=1;
-    }
-    await kvs.set(nameIndexKey(canonical.name),{assetId:canonical.id,name:canonical.name,updatedAt:now()});
-    await addHistory(canonical.id,{type:'deduplicated',source:'jira-sync',message:`Reconciled ${group.length-1} duplicate Jira-discovered asset${group.length===2?'':'s'}`});
-  }
-  return removed;
-}
 function discoveredIdentifiersFromIssues(issues,fieldId){const discovered=new Map();let ignored=0;for(const issue of issues)for(const identifier of fieldValues(issue.fields?.[fieldId])){if(!validIdentifier(identifier)){ignored+=1;continue;}const normalized=normaliseName(identifier);if(!discovered.has(normalized))discovered.set(normalized,identifier);}return{identifiers:[...discovered.values()],ignored};}
 async function findAssetForJiraIdentifier(fieldId,identifier){const deterministicId=makeJiraAssetId(fieldId,identifier);let asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(asset)return asset;const indexed=await kvs.get(nameIndexKey(identifier));if(indexed?.assetId)asset=await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);return asset||null;}
 async function recordScannedTicketsForAsset(asset,issues,field,settings,runId){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;const client=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraClientField?.id);if(client&&asset.jiraClientSyncRunId!==runId)asset=await saveOneAsset({...asset,client,jiraClientSyncRunId:runId},'jira-sync');for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});}}
@@ -245,14 +215,11 @@ resolver.define('countAssetsPage',async({payload})=>{
   for(const a of items){const key=clean(a?.type||'Other')||'Other';byType[key]=(byType[key]||0)+1;}
   return{count:items.length,nextCursor:page.nextCursor||null,inUse:items.filter(a=>['In Use','Assigned','Active'].includes(a?.status)).length,available:items.filter(a=>a?.status==='Available').length,repair:items.filter(a=>['Repair','In Repair'].includes(a?.status)).length,byType};
 });
-resolver.define('listAssets',async({payload})=>{const query=String(payload?.query||'').toLowerCase(),status=clean(payload?.status||''),type=clean(payload?.type||''),location=clean(payload?.location||'');let assets=await queryAllByPrefix(ASSET_PREFIX);if(query)assets=assets.filter(a=>[a.id,a.name,a.jiraIdentifier,a.crewCode,a.type,a.manufacturer,a.model,a.serialNumber,a.assigneeName,a.status,a.location].some(v=>String(v||'').toLowerCase().includes(query)));if(status)assets=assets.filter(a=>a.status===status);if(type)assets=assets.filter(a=>a.type===type);if(location)assets=assets.filter(a=>a.location===location);return assets.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{sensitivity:'base'}));});
 resolver.define('syncAssetsFromJira',async({payload})=>syncAssetsFromJira({restart:Boolean(payload?.restart)}));
 resolver.define('getSyncStatus',async()=>await kvs.get(SYNC_PROGRESS_KEY)||await kvs.get(SYNC_KEY)||null);
 resolver.define('getJiraCustomFields',async()=>getJiraCustomFields());
 resolver.define('getJiraProjects',async()=>getJiraProjects());
-resolver.define('getJiraClientOptions',async()=>{const values=new Set();let cursor=null,guard=0;do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();for(const entry of safeArray(page?.results)){const value=clean(entry?.value?.client||'');if(value)values.add(value);}cursor=page?.nextCursor||null;guard+=1;}while(cursor&&guard<10);return [...values].sort((a,b)=>String(a).localeCompare(String(b),undefined,{sensitivity:'base'}));});
-resolver.define('searchDevices',async({payload})=>{const query=normaliseName(payload?.query||'');const assets=await queryAllByPrefix(ASSET_PREFIX);return assets.filter(a=>!query||normaliseName(a.name).includes(query)||normaliseName(a.jiraIdentifier).includes(query)).sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'})).slice(0,50).map(a=>({id:a.id,name:a.name}));});
-resolver.define('getAssetByName',async({payload})=>{const name=clean(payload?.name||'');if(!name)return null;const indexed=await kvs.get(nameIndexKey(name));if(indexed?.assetId)return kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);const assets=await queryAllByPrefix(ASSET_PREFIX);return assets.find(a=>normaliseName(a.name)===normaliseName(name))||null;});
+resolver.define('getJiraClientOptions',async()=>{const values=new Set((await queryAllByPrefix(CLIENT_INDEX_PREFIX,1000)).map(e=>clean(e?.client||'')).filter(Boolean));let cursor=null,guard=0;do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();for(const entry of safeArray(page?.results)){const value=clean(entry?.value?.client||'');if(value)values.add(value);}cursor=page?.nextCursor||null;guard+=1;}while(cursor&&guard<10);return [...values].sort((a,b)=>String(a).localeCompare(String(b),undefined,{sensitivity:'base'}));});
 resolver.define('getAsset',async({payload})=>payload?.id?kvs.get(`${ASSET_PREFIX}${payload.id}`):null);resolver.define('saveAsset',async({payload})=>saveOneAsset(payload?.asset||{},'manual'));
 resolver.define('bulkImportAssets',async({payload})=>{
   const rows=safeArray(payload?.assets);
@@ -386,8 +353,8 @@ resolver.define('reconcileAssetImport',async({payload})=>{
   return{processed:rows.length,created,updated,merged,failed};
 });
 
-resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
-resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const settings=await getSettingsValue();const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`);return history.filter(item=>ticketMatchesConfiguredProject(item,settings)).sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});
+resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`,1000);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
+resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const settings=await getSettingsValue();const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`,1000);return history.filter(item=>ticketMatchesConfiguredProject(item,settings)).sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});
 resolver.define('getSettings',async()=>getSettingsValue());
 resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};const previousSettings=await getSettingsValue();const normaliseField=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;const settings={assetTypes:safeArray(incoming.assetTypes).map(clean).filter(Boolean),statuses:safeArray(incoming.statuses).map(clean).filter(Boolean),locations:safeArray(incoming.locations).map(clean).filter(Boolean),customFields:safeArray(incoming.customFields).map(f=>({key:clean(f.key),label:clean(f.label),type:clean(f.type||'text')})).filter(f=>f.key&&f.label),jiraAssetField:normaliseField(incoming.jiraAssetField),jiraRelatedAssetField:normaliseField(incoming.jiraRelatedAssetField),jiraLocationField:normaliseField(incoming.jiraLocationField),jiraTypeField:normaliseField(incoming.jiraTypeField),jiraCrewCodeField:normaliseField(incoming.jiraCrewCodeField),jiraClientField:normaliseField(incoming.jiraClientField),jiraProjectKey:clean(incoming.jiraProjectKey||''),jiraFaultField:normaliseField(incoming.jiraFaultField),crewMappings:safeArray(incoming.crewMappings).map(m=>({crewCode:clean(m.crewCode),accountId:clean(m.accountId),displayName:clean(m.displayName)})).filter(m=>m.crewCode&&(m.displayName||m.accountId)),jiraDiscoveryEnabled:incoming.jiraDiscoveryEnabled!==false};if(!settings.assetTypes.length)settings.assetTypes=DEFAULT_SETTINGS.assetTypes;if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;const previousFaultFieldId=clean(previousSettings?.jiraFaultField?.id||'');const nextFaultFieldId=clean(settings?.jiraFaultField?.id||'');const previousProjectKey=clean(previousSettings?.jiraProjectKey||'');const nextProjectKey=clean(settings?.jiraProjectKey||'');if(previousFaultFieldId!==nextFaultFieldId||previousProjectKey!==nextProjectKey){const cachedTickets=await queryAllByPrefix(ASSET_TICKET_PREFIX);for(const ticket of cachedTickets){if(ticket?.assetId&&ticket?.key&&ticket?.relation)await kvs.delete(`${ASSET_TICKET_PREFIX}${ticket.assetId}:${ticket.key}:${ticket.relation}`);}const faultHistory=await queryAllByPrefix(FAULT_HISTORY_PREFIX);for(const item of faultHistory){if(item?.historyKey)await kvs.delete(item.historyKey);}console.log('Device Fault mapping changed; cleared cached ticket/fault data');}await kvs.set(SETTINGS_KEY,settings);if(scanSignature(previousSettings)!==scanSignature(settings)){await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);}return settings;});
 resolver.define('searchUsers',async({payload})=>{const q=clean(payload?.query||'');if(!q||q.length<2)return[];const response=await api.asUser().requestJira(route`/rest/api/3/user/search?query=${q}&maxResults=20`,{headers:{Accept:'application/json'}});if(!response.ok)return[];const users=await response.json();return users.filter(u=>u.active!==false&&u.accountType!=='app').map(u=>({accountId:u.accountId,displayName:u.displayName,avatarUrl:u.avatarUrls?.['24x24']||''}));});
