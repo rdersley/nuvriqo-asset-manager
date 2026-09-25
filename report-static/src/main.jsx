@@ -2,10 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke } from '@forge/bridge';
 import './styles.css';
+import { downloadCsv } from '../../shared/csv.js';
 
 const formatDate = (value) => value ? new Date(value).toLocaleDateString() : '—';
-function csvEscape(value) { const text = String(value ?? ''); return /[",\n]/.test(text) ? `"${text.replaceAll('"','""')}"` : text; }
-function downloadCsv(filename, headers, rows) { const csv=[headers,...rows].map(r=>r.map(csvEscape).join(',')).join('\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url); }
 
 function Bars({ title, rows }) {
   const max=Math.max(...rows.map(r=>r.count),1);

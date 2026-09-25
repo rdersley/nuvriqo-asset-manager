@@ -5,11 +5,10 @@ import ImportDialog from './ImportDialog';
 import ReportsWorkspace from './ReportsWorkspace';
 import './styles.css';
 import './mockup.css';
+import { downloadCsv } from '../../shared/csv.js';
 
 const emptyAsset = { id: '', name: '', client: '', type: 'Laptop', manufacturer: '', model: '', serialNumber: '', assigneeAccountId: '', assigneeName: '', status: 'Available', location: '', purchaseDate: '', warrantyExpiry: '', notes: '', customFields: {} };
 const formatDate = (value) => value ? new Date(value).toLocaleDateString() : '—';
-function csvEscape(value) { const text = String(value ?? ''); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
-function downloadCsv(filename, headers, rows) { const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n'); const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
 
 function UserPicker({ asset, setAsset }) {
   const [query, setQuery] = useState(asset.assigneeName || ''); const [results, setResults] = useState([]);
