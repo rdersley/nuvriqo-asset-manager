@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { createHash } from 'node:crypto';
+import { buildPortalPlusAssetModule } from './portal-plus-provider.js';
 
 const resolver = new Resolver();
 const SETTINGS_KEY = 'settings:asset-manager';
@@ -47,11 +48,13 @@ function findOrganizationsField(fields) {
   }) || null;
 }
 
-async function currentCustomerOrganizations() {
+async function currentCustomerOrganizations(context) {
+  const accountId = String(context?.accountId || '');
+  if (!accountId) return [];
   const organisations = [];
   let start = 0;
   for (let guard = 0; guard < 10; guard += 1) {
-    const response = await api.asUser().requestJira(route`/rest/servicedeskapi/organization?start=${start}&limit=100`, { headers: { Accept: 'application/json' } });
+    const response = await api.asApp().requestJira(route`/rest/servicedeskapi/organization?accountId=${accountId}&start=${start}&limit=100`, { headers: { Accept: 'application/json' } });
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) return [];
       throw new Error(`Could not load your Jira Service Management organisations (${response.status}).`);
@@ -110,11 +113,11 @@ async function assetForIdentifier(deviceFieldId, identifier) {
   return null;
 }
 
-resolver.define('getPortalAssets', async () => {
+async function portalAssetsForContext(context) {
   const settings = await getSettings();
   if (!settings.jiraAssetField?.id) return { organisations: [], assets: [], configured: false, reason: 'Asset Manager has not been mapped to a Jira Device ID field yet.' };
 
-  const organisations = await currentCustomerOrganizations();
+  const organisations = await currentCustomerOrganizations(context);
   if (!organisations.length) return { organisations: [], assets: [], configured: true, reason: 'Your portal account is not a member of a Jira Service Management organisation.' };
 
   const fields = await getFields();
@@ -151,6 +154,9 @@ resolver.define('getPortalAssets', async () => {
 
   const assets = [...visible.values()].sort((a, b) => String(a.deviceId).localeCompare(String(b.deviceId), undefined, { sensitivity: 'base' }));
   return { organisations, assets, partial, configured: true, organisationField: { id: organisationField.id, name: organisationField.name } };
-});
+}
+
+resolver.define('getPortalAssets', async ({ context }) => portalAssetsForContext(context));
+resolver.define('getPortalPlusModule', async ({ context }) => buildPortalPlusAssetModule(await portalAssetsForContext(context)));
 
 export const handler = resolver.getDefinitions();
