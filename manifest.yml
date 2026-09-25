@@ -83,6 +83,11 @@ modules:
         - customer
         - unlicensed
 
+  scheduledTrigger:
+    - key: portal-plus-snapshot
+      function: portal-plus-refresh
+      interval: hour
+
   function:
     - key: resolver
       handler: index.handler
@@ -96,6 +101,8 @@ modules:
       handler: portal-assets.handler
     - key: crew-tracking
       handler: crew.handler
+    - key: portal-plus-refresh
+      handler: portal-plus-refresh.handler
 
 resources:
   - key: main
@@ -116,6 +123,7 @@ permissions:
     - storage:app
     - read:jira-work
     - write:jira-work
+    - manage:jira-project
     - read:jira-user
     - read:user:jira
     - read:avatar:jira

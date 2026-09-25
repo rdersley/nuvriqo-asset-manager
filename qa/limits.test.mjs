@@ -92,11 +92,11 @@ test('portal pages past 500 tickets per organisation and flags when it stops ear
   store.set(`asset-name:${Buffer.from('old_device').toString('base64url')}`, { assetId: 'P1' });
   let page = 0;
   searchHandler = () => { page += 1; return page < 7 ? { issues: [], nextPageToken: `p${page}` } : { issues: [{ key: 'SD-1', fields: { customfield_100: 'OLD_DEVICE' } }] }; };
-  let result = await call(portal, 'getPortalAssets');
+  let result = await portal.getPortalAssets({ payload: {}, context: { accountId: 'acc-1' } });
   assert.deepEqual(result.assets.map((a) => a.id), ['P1'], 'device only on the 7th page is found');
   assert.equal(result.partial, false);
 
   searchHandler = () => ({ issues: [], nextPageToken: 'more' });
-  result = await call(portal, 'getPortalAssets');
+  result = await portal.getPortalAssets({ payload: {}, context: { accountId: 'acc-1' } });
   assert.equal(result.partial, true);
 });
