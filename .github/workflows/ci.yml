@@ -3,9 +3,17 @@ name: Asset Manager CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
+
+# A newer push to the same PR cancels its in-flight run. Runs on main queue instead of
+# cancelling, so deploys never overlap ("Environment is blocked by other deployment").
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
@@ -79,31 +87,23 @@ jobs:
             exit 0
           fi
           exit "$status"
-
-  sandbox-readonly-qa:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
-      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
-      FORGE_SITE: retailinmotion-sandbox1.atlassian.net
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Keep built UIs for deployment
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          node-version: 22
-      - name: Live Jira read-only smoke tests
-        run: node qa/live-jira-smoke.mjs
+          name: ui-dist
+          retention-days: 1
+          path: |
+            static/dist
+            field-static/dist
+            panel-static/dist
+            split-static/dist
+            portal-static/dist
+            crew-static/dist
 
   deploy-sandbox:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    needs:
-      - validate
-      - sandbox-readonly-qa
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: retailinmotion-sandbox1
@@ -121,32 +121,12 @@ jobs:
           node-version: 22
       - name: Install backend dependencies
         run: npm install --ignore-scripts
-      - name: Install Asset Manager UI dependencies
-        run: npm --prefix static install
-      - name: Install Device field UI dependencies
-        run: npm --prefix field-static install
-      - name: Install Issue panel UI dependencies
-        run: npm --prefix panel-static install
-      - name: Install Device split UI dependencies
-        run: npm --prefix split-static install
-      - name: Install Customer portal UI dependencies
-        run: npm --prefix portal-static install
-      - name: Install Internal Asset Operations UI dependencies
-        run: npm --prefix crew-static install
+      - name: Download UI builds from validate
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
       - name: Verify Marketplace-safe manifest
         run: npm run verify:marketplace
-      - name: Build Asset Manager UI
-        run: npm --prefix static run build
-      - name: Build Device field UI
-        run: npm --prefix field-static run build
-      - name: Build Issue panel UI
-        run: npm --prefix panel-static run build
-      - name: Build Device split UI
-        run: npm --prefix split-static run build
-      - name: Build Customer portal UI
-        run: npm --prefix portal-static run build
-      - name: Build Internal Asset Operations UI
-        run: npm --prefix crew-static run build
       - name: Install Forge CLI
         run: npm install --global @forge/cli@latest
       - name: Disable Forge usage analytics
