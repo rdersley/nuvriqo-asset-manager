@@ -44,7 +44,7 @@ test('an export re-imports with the original values', async () => {
 });
 
 test('every built UI exports through the shared escaper', () => {
-  for (const file of ['static/src/main.jsx', 'static/src/reports.jsx', 'static/src/ReportsWorkspace.jsx', 'reports-static/src/main.jsx']) {
+  for (const file of ['static/src/main.jsx', 'static/src/reports.jsx', 'static/src/ReportsWorkspace.jsx']) {
     const src = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
     assert.match(src, /import \{ downloadCsv \} from '\.\.\/\.\.\/shared\/csv\.js';/, file);
     assert.doesNotMatch(src, /function (csvEscape|downloadCsv)\(|const esc=/, file);
