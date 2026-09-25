@@ -43,7 +43,7 @@ function App() {
 
     {!!data.organisations?.length && <div className="orgs"><strong>Organisations:</strong> {data.organisations.map((org) => org.name).join(', ')}</div>}
 
-    {data.reason && !assets.length ? <div className="state info">{data.reason}</div> : <>
+    {data.reason && !assets.length ? <div className="state info">{data.reason}</div> : <>{data.partial && <div className="state info">Showing devices from your organisation's most recent tickets. Some older devices may not be listed.</div>}
       <div className="filters">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search Device ID, model, serial number, holder…" />
         <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{statuses.map((value) => <option key={value}>{value}</option>)}</select>

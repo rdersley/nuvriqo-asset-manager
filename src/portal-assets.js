@@ -69,12 +69,17 @@ function escapeJql(value) {
   return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-async function identifiersForOrganisation(deviceFieldId, organisationName) {
+// Up to 2,000 recent tickets per organisation, within a shared time budget so the portal
+// call stays well inside the 25s Forge limit. `partial` means older devices may be missing.
+const ORGANISATION_TICKET_PAGES = 20;
+const PORTAL_TIME_BUDGET_MS = 15000;
+
+async function identifiersForOrganisation(deviceFieldId, organisationName, deadline) {
   const numericId = String(deviceFieldId).replace('customfield_', '');
   const jql = `cf[${numericId}] is not EMPTY AND organizations = "${escapeJql(organisationName)}" ORDER BY created DESC`;
   const identifiers = new Map();
   let nextPageToken;
-  for (let guard = 0; guard < 5; guard += 1) {
+  for (let guard = 0; guard < ORGANISATION_TICKET_PAGES && Date.now() < deadline; guard += 1) {
     const body = { jql, fields: [deviceFieldId], maxResults: 100 };
     if (nextPageToken) body.nextPageToken = nextPageToken;
     const response = await api.asApp().requestJira(route`/rest/api/3/search/jql`, {
@@ -94,7 +99,7 @@ async function identifiersForOrganisation(deviceFieldId, organisationName) {
     nextPageToken = data.nextPageToken || null;
     if (!nextPageToken) break;
   }
-  return [...identifiers.values()];
+  return { identifiers: [...identifiers.values()], partial: Boolean(nextPageToken) };
 }
 
 async function assetForIdentifier(deviceFieldId, identifier) {
@@ -117,10 +122,14 @@ resolver.define('getPortalAssets', async () => {
   if (!organisationField) return { organisations, assets: [], configured: true, reason: 'The Jira Service Management Organizations field could not be found.' };
 
   const visible = new Map();
+  const deadline = Date.now() + PORTAL_TIME_BUDGET_MS;
+  let partial = false;
   for (const organisation of organisations) {
-    const identifiers = await identifiersForOrganisation(settings.jiraAssetField.id, organisation.name);
-    for (const identifier of identifiers) {
-      const asset = await assetForIdentifier(settings.jiraAssetField.id, identifier);
+    if (Date.now() >= deadline) { partial = true; break; }
+    const found = await identifiersForOrganisation(settings.jiraAssetField.id, organisation.name, deadline);
+    if (found.partial) partial = true;
+    const resolved = await Promise.all(found.identifiers.map(async (identifier) => ({ identifier, asset: await assetForIdentifier(settings.jiraAssetField.id, identifier) })));
+    for (const { identifier, asset } of resolved) {
       if (!asset) continue;
       const existing = visible.get(asset.id);
       const organisationNames = new Set([...(existing?.organisationNames || []), organisation.name]);
@@ -141,7 +150,7 @@ resolver.define('getPortalAssets', async () => {
   }
 
   const assets = [...visible.values()].sort((a, b) => String(a.deviceId).localeCompare(String(b.deviceId), undefined, { sensitivity: 'base' }));
-  return { organisations, assets, configured: true, organisationField: { id: organisationField.id, name: organisationField.name } };
+  return { organisations, assets, partial, configured: true, organisationField: { id: organisationField.id, name: organisationField.name } };
 });
 
 export const handler = resolver.getDefinitions();

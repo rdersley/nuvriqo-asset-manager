@@ -49,7 +49,7 @@ test('ticket splitter detects device IDs with single-character suffixes', () => 
   assert.deepEqual(matches,['RYR_WM_7','RYR_WM_6','RYR_WM_69','RYR_STN_122','RYR_STN_117']);
 });
 
-test('placeholder identifiers are rejected', () => { assert.match(backend,/validIdentifier/); assert.match(backend,/autoDiscovered&&!validIdentifier\(identifier\)/); });
+test('placeholder identifiers are rejected', () => { assert.match(backend,/validIdentifier/); assert.match(backend,/if\(!validIdentifier\(identifier\)\)\{ignored\+=1;continue;\}/); });
 test('configuration UI uses generic assignment-reference wording and save feedback', () => { assert.match(frontend,/Jira assignment reference field/); assert.match(frontend,/Assignment reference → holder mappings/); assert.match(frontend,/Saving…/); assert.match(frontend,/saveStage/); });
 test('configuration textareas preserve raw multiline editing until save', () => { assert.match(frontend,/assetTypesText/); assert.match(frontend,/statusesText/); assert.match(frontend,/locationsText/); assert.match(frontend,/crewMappingsText/); assert.match(frontend,/customFieldsText/); assert.match(frontend,/compileSettings/); });
 test('Jira discovery can be disabled while one-off scanning remains available', () => { assert.match(backend,/jiraDiscoveryEnabled:\s*true/); assert.match(backend,/jiraDiscoveryEnabled:incoming\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/Automatically scan and import assets from the mapped Jira Device ID field/); assert.match(frontend,/Scan & import Device IDs now/); assert.match(frontend,/Asset Manager startup is intentionally non-blocking/); assert.match(frontend,/saved\.jiraAssetField\?\.id&&saved\.jiraProjectKey&&saved\.jiraDiscoveryEnabled!==false/); });
