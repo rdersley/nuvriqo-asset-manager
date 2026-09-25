@@ -25,7 +25,7 @@ const deviceCodeKey = (v) => `${DEVICE_CODE_PREFIX}${encoded(v)}`;
 const internalAssetId = (v) => `AST-VPOS-${encoded(v).slice(0, 40).toUpperCase()}`;
 const now = () => new Date().toISOString();
 
-async function entries(prefix, limit = null) {
+async function entries(prefix, limit = 500) {
   const out = []; let cursor;
   do {
     let q = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(Math.min(100, limit ? Math.max(1, limit - out.length) : 100));
@@ -35,7 +35,7 @@ async function entries(prefix, limit = null) {
   } while (cursor);
   return out;
 }
-const values = async (prefix) => (await entries(prefix)).map(e => e.value);
+const values = async (prefix, limit = 500) => (await entries(prefix, limit)).map(e => e.value);
 
 async function addHistory(assetId, event) {
   const timestamp = now();
@@ -54,13 +54,13 @@ async function searchCrewTickets(settings) {
   const f = settings.jiraCrewCodeField; if (!f?.id) return [];
   const numericId = String(f.id).replace('customfield_','');
   const fields = [f.id, settings.jiraAssetField?.id, 'summary','status','created','resolutiondate','issuetype','priority'].filter(Boolean);
-  const issues = []; let nextPageToken;
+  const issues = []; let nextPageToken; let guard=0;
   do {
     const body = { jql:`cf[${numericId}] is not EMPTY ORDER BY created DESC`, fields, maxResults:100, ...(nextPageToken ? {nextPageToken}: {}) };
     const r = await api.asUser().requestJira(route`/rest/api/3/search/jql`, { method:'POST', headers:{Accept:'application/json','Content-Type':'application/json'}, body:JSON.stringify(body) });
     if (!r.ok) throw new Error(`Crew ticket lookup failed with status ${r.status}.`);
-    const data = await r.json(); issues.push(...safeArray(data.issues)); nextPageToken = data.nextPageToken || null;
-  } while (nextPageToken);
+    const data = await r.json(); issues.push(...safeArray(data.issues)); nextPageToken = data.nextPageToken || null; guard+=1;
+  } while (nextPageToken && guard<5);
   return issues;
 }
 function identityValues(r) {
@@ -82,6 +82,19 @@ async function resolveCrew(login) {
   const alias = await kvs.get(crewAliasKey(login)); return alias?.crewCode ? (await kvs.get(crewKey(alias.crewCode))) || null : null;
 }
 
+async function lookupJsmCustomerByEmail(email) {
+  email=clean(email||'');
+  if(!email||!email.includes('@'))return{status:'no-email'};
+  const response=await api.asUser().requestJira(route`/rest/api/3/user/search?query=${email}&maxResults=20`,{headers:{Accept:'application/json'}});
+  if(!response.ok)return{status:'lookup-error'};
+  const users=safeArray(await response.json()).filter(u=>u?.active!==false&&u?.accountType!=='app');
+  const exact=users.filter(u=>u?.emailAddress&&normalise(u.emailAddress)===normalise(email));
+  const matches=exact.length?exact:(users.length===1?users:[]);
+  if(matches.length===1){const u=matches[0];return{status:'linked',accountId:clean(u.accountId||''),displayName:clean(u.displayName||email),accountType:clean(u.accountType||'')};}
+  if(users.length>1)return{status:'multiple'};
+  return{status:'not-found'};
+}
+
 resolver.define('importCrew', async ({payload}) => {
   const rows=safeArray(payload?.rows); let imported=0; const failed=[];
   for (let i=0;i<rows.length;i++) {
@@ -92,6 +105,24 @@ resolver.define('importCrew', async ({payload}) => {
     record.identityAliases=await saveCrewAliases(record,existing); await kvs.set(crewKey(crewCode),record); imported++;
   }
   return {imported,failed};
+});
+
+resolver.define('linkCrewCustomers',async({payload})=>{
+  const retry=payload?.retry===true;
+  const limit=Math.min(25,Math.max(1,Number(payload?.limit||20)));
+  const crewRows=(await entries(CREW_PREFIX,500)).map(e=>e.value);
+  const candidates=crewRows.filter(c=>clean(c?.email||'')&&(retry||!c?.jsmCustomerLinkStatus||c.jsmCustomerLinkStatus==='lookup-error')).slice(0,limit);
+  const assets=(await entries(ASSET_PREFIX,500)).map(e=>e.value);
+  let linked=0,notFound=0,multiple=0,errors=0,assetsLinked=0;
+  for(const crew of candidates){
+    const result=await lookupJsmCustomerByEmail(crew.email);
+    const updated={...crew,jsmCustomerLinkStatus:result.status,jsmCustomerAccountId:result.accountId||'',jsmCustomerDisplayName:result.displayName||'',jsmCustomerAccountType:result.accountType||'',jsmCustomerLinkedAt:result.status==='linked'?now():(crew.jsmCustomerLinkedAt||'')};
+    await kvs.set(crewKey(crew.crewCode),updated);
+    if(result.status==='linked'){linked+=1;for(const asset of assets){if(normalise(asset?.crewCode)!==normalise(crew.crewCode))continue;if(asset.assigneeAccountId)continue;const currentName=clean(asset.assigneeName||'');if(currentName&&normalise(currentName)!==normalise(crew.name)&&normalise(currentName)!==normalise(crew.crewCode))continue;await kvs.set(`${ASSET_PREFIX}${asset.id}`,{...asset,assigneeAccountId:result.accountId,assigneeName:result.displayName||crew.name||crew.crewCode,updatedAt:now()});await addHistory(asset.id,{type:'jsm-customer-linked',source:'crew-customer-link',message:`Linked holder to JSM customer ${result.displayName||crew.email}`,crewCode:crew.crewCode,accountId:result.accountId});assetsLinked+=1;}}
+    else if(result.status==='not-found')notFound+=1;else if(result.status==='multiple')multiple+=1;else errors+=1;
+  }
+  const remaining=crewRows.filter(c=>clean(c?.email||'')&&(retry||!c?.jsmCustomerLinkStatus||c.jsmCustomerLinkStatus==='lookup-error')).length-candidates.length;
+  return{processed:candidates.length,linked,notFound,multiple,errors,assetsLinked,remaining:Math.max(0,remaining)};
 });
 
 resolver.define('getCrewReport', async () => {

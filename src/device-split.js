@@ -12,17 +12,18 @@ const clean = (value) => String(value ?? '').trim();
 const normalise = (value) => clean(value).toLocaleLowerCase('en').replace(/\s+/g, ' ');
 const now = () => new Date().toISOString();
 
-async function queryAllByPrefix(prefix) {
+async function queryAllByPrefix(prefix, limit = 500) {
   const values = [];
   let cursor;
+  const cap = Math.max(1, Math.min(Number(limit) || 500, 500));
   do {
-    let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100);
+    let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(Math.min(100, cap - values.length));
     if (cursor) query = query.cursor(cursor);
     const page = await query.getMany();
     values.push(...page.results.map((entry) => entry.value));
     cursor = page.nextCursor;
-  } while (cursor);
-  return values;
+  } while (cursor && values.length < cap);
+  return values.slice(0, cap);
 }
 
 function adfToText(node) {

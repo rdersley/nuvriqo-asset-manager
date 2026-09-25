@@ -1,5 +1,7 @@
 node_modules/
 static/node_modules/
 static/dist/
+*-static/dist/
+*-static/node_modules/
 .env
 .DS_Store

@@ -12,7 +12,6 @@ const manifest = fs.readFileSync(new URL('../manifest.yml', import.meta.url), 'u
 const mainVite = fs.readFileSync(new URL('../static/vite.config.js', import.meta.url), 'utf8');
 const fieldVite = fs.readFileSync(new URL('../field-static/vite.config.js', import.meta.url), 'utf8');
 const panelVite = fs.readFileSync(new URL('../panel-static/vite.config.js', import.meta.url), 'utf8');
-const sdClientUiPrep = fs.readFileSync(new URL('../scripts/prepare-sd-client-ui.mjs', import.meta.url), 'utf8');
 
 const clean = (value) => (typeof value === 'string' ? value.trim() : value);
 const normaliseName = (value) => String(clean(value) || '').toLocaleLowerCase('en').replace(/\s+/g, ' ');
@@ -32,8 +31,8 @@ test('Jira project scope limits discovery and ticket history to one configured p
   assert.match(backend,/jiraProjectKey/);
   assert.match(backend,/const scope=projectKey/);
   assert.match(backend,/jiraProjectKey:clean\(incoming\.jiraProjectKey\|\|''\)/);
-  assert.match(sdClientUiPrep,/Jira project to scan/);
-  assert.match(sdClientUiPrep,/getJiraProjects/);
+  assert.match(frontend,/Jira project to scan/);
+  assert.match(frontend,/getJiraProjects/);
 });
 
 test('Jira sync skips expensive manual uniqueness scan', () => { assert.match(backend,/source !== 'jira-sync'/); assert.match(backend,/assertUniqueDeviceName/); });
@@ -51,14 +50,14 @@ test('ticket splitter detects device IDs with single-character suffixes', () => 
 test('placeholder identifiers are rejected', () => { assert.match(backend,/validIdentifier/); assert.match(backend,/autoDiscovered&&!validIdentifier\(identifier\)/); });
 test('configuration UI uses generic assignment-reference wording and save feedback', () => { assert.match(frontend,/Jira assignment reference field/); assert.match(frontend,/Assignment reference → holder mappings/); assert.match(frontend,/Saving…/); assert.match(frontend,/saveStage/); });
 test('configuration textareas preserve raw multiline editing until save', () => { assert.match(frontend,/assetTypesText/); assert.match(frontend,/statusesText/); assert.match(frontend,/locationsText/); assert.match(frontend,/crewMappingsText/); assert.match(frontend,/customFieldsText/); assert.match(frontend,/compileSettings/); });
-test('Jira discovery can be disabled while one-off scanning remains available', () => { assert.match(backend,/jiraDiscoveryEnabled:\s*true/); assert.match(backend,/jiraDiscoveryEnabled:incoming\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/Automatically scan and import assets from the mapped Jira Device ID field/); assert.match(frontend,/Scan & import Device IDs now/); assert.match(frontend,/cfg\.jiraAssetField\?\.id&&cfg\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/saved\.jiraAssetField\?\.id&&saved\.jiraDiscoveryEnabled!==false/); });
-test('asset register exposes latest populated device fault only', () => { assert.match(backend,/const faults=primary\.filter\(t=>clean\(t\.fault\|\|''\)\)/); assert.match(backend,/latestFault:faults\[0\]\|\|null/); assert.match(frontend,/report\?\.latestFault/); assert.match(frontend,/<th>Fault<\/th>/); });
+test('Jira discovery can be disabled while one-off scanning remains available', () => { assert.match(backend,/jiraDiscoveryEnabled:\s*true/); assert.match(backend,/jiraDiscoveryEnabled:incoming\.jiraDiscoveryEnabled!==false/); assert.match(frontend,/Automatically scan and import assets from the mapped Jira Device ID field/); assert.match(frontend,/Scan & import Device IDs now/); assert.match(frontend,/Asset Manager startup is intentionally non-blocking/); assert.match(frontend,/saved\.jiraAssetField\?\.id&&saved\.jiraProjectKey&&saved\.jiraDiscoveryEnabled!==false/); });
+test('asset register exposes latest populated device fault only', () => { assert.match(backend,/const faults=primary\.filter\(t=>clean\(t\.fault\|\|''\)\)/); assert.match(backend,/latestFault:faults\[0\]\|\|null/); assert.match(frontend,/reportByAsset\.get\(asset\.id\)\?\.latestFault/); assert.match(frontend,/key==='fault'/); });
 
 test('Related Assets field is configurable and kept separate from primary Device ID', () => {
   assert.match(backend,/jiraRelatedAssetField:\s*null/);
   assert.match(backend,/jiraRelatedAssetField:normaliseField\(incoming\.jiraRelatedAssetField\)/);
   assert.match(frontend,/Jira related asset field/);
-  assert.match(frontend,/Related Device ID/);
+  assert.match(frontend,/Map a secondary device field/);
   assert.match(frontend,/jiraRelatedAssetField:null/);
 });
 

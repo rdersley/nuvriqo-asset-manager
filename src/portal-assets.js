@@ -50,7 +50,7 @@ function findOrganizationsField(fields) {
 async function currentCustomerOrganizations() {
   const organisations = [];
   let start = 0;
-  for (let guard = 0; guard < 50; guard += 1) {
+  for (let guard = 0; guard < 10; guard += 1) {
     const response = await api.asUser().requestJira(route`/rest/servicedeskapi/organization?start=${start}&limit=100`, { headers: { Accept: 'application/json' } });
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) return [];
@@ -74,7 +74,7 @@ async function identifiersForOrganisation(deviceFieldId, organisationName) {
   const jql = `cf[${numericId}] is not EMPTY AND organizations = "${escapeJql(organisationName)}" ORDER BY created DESC`;
   const identifiers = new Map();
   let nextPageToken;
-  for (let guard = 0; guard < 100; guard += 1) {
+  for (let guard = 0; guard < 5; guard += 1) {
     const body = { jql, fields: [deviceFieldId], maxResults: 100 };
     if (nextPageToken) body.nextPageToken = nextPageToken;
     const response = await api.asApp().requestJira(route`/rest/api/3/search/jql`, {

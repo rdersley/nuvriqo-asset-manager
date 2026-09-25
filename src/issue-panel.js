@@ -16,17 +16,18 @@ const validIdentifier = (value) => {
   return Boolean(v && !['.', '-', 'n/a', 'na', 'none', 'null', 'unknown'].includes(v));
 };
 
-async function queryAllByPrefix(prefix) {
+async function queryAllByPrefix(prefix, limit = 300) {
   const values = [];
   let cursor;
+  const cap = Math.max(1, Math.min(Number(limit) || 300, 500));
   do {
-    let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100);
+    let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(Math.min(100, cap - values.length));
     if (cursor) query = query.cursor(cursor);
     const page = await query.getMany();
     values.push(...page.results.map((entry) => entry.value));
     cursor = page.nextCursor;
-  } while (cursor);
-  return values;
+  } while (cursor && values.length < cap);
+  return values.slice(0, cap);
 }
 
 async function settings() {

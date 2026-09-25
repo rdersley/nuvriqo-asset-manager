@@ -43,15 +43,6 @@ jobs:
       - name: Disable Forge usage analytics
         run: forge settings set usage-analytics false
 
-      - name: Prepare public release candidate
-        run: |
-          node scripts/prepare-device-fault.mjs
-          node scripts/prepare-sd-client.mjs
-          node scripts/prepare-device-id-validation.mjs
-          node scripts/prepare-bulk-cleanup.mjs
-          node scripts/prepare-import-reconciliation.mjs
-          node scripts/prepare-large-asset-pagination.mjs
-          node scripts/prepare-scale-guards.mjs
 
       - name: Verify Marketplace-safe manifest
         run: npm run verify:marketplace
