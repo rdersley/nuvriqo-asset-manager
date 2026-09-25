@@ -56,6 +56,19 @@ jobs:
       - name: Switch to Marketplace-safe manifest
         run: cp manifest.marketplace.yml manifest.yml
       - name: Forge lint Marketplace descriptor
-        run: forge lint
+        shell: bash
+        run: |
+          set +e
+          output=$(forge lint 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -eq 0 ]; then exit 0; fi
+          # The deploy step approves MAJOR_VERSION_RULE explicitly; allow only that approval here.
+          if echo "$output" | grep -q "0 errors, 0 warnings, 1 approval" && echo "$output" | grep -q "MAJOR_VERSION_RULE"; then
+            echo "Forge lint only requires approval for the intentional scope/module major version change; continuing."
+            exit 0
+          fi
+          exit "$status"
       - name: Deploy exact release candidate to Forge production
         run: forge deploy --environment "$FORGE_ENVIRONMENT" --approve MAJOR_VERSION_RULE --non-interactive
