@@ -41,22 +41,6 @@ jobs:
         run: npm install --global @forge/cli@latest
       - name: Disable Forge usage analytics
         run: forge settings set usage-analytics false
-      - name: Prepare Device Fault backend mapping
-        run: node scripts/prepare-device-fault.mjs
-      - name: Prepare SD Client asset mapping
-        run: node scripts/prepare-sd-client.mjs
-      - name: Tighten Jira Device ID validation
-        run: node scripts/prepare-device-id-validation.mjs
-      - name: Prepare bulk Jira import cleanup
-        run: node scripts/prepare-bulk-cleanup.mjs
-      - name: Prepare CSV import reconciliation
-        run: node scripts/prepare-import-reconciliation.mjs
-      - name: Prepare large asset pagination and exact counts
-        run: node scripts/prepare-large-asset-pagination.mjs
-      - name: Prepare internal crew-to-JSM customer linking
-        run: node scripts/prepare-crew-customer-link.mjs
-      - name: Apply scale safety guards
-        run: node scripts/prepare-scale-guards.mjs
       - name: Verify Marketplace-safe manifest
         run: npm run verify:marketplace
       - name: Check resolver syntax
@@ -156,22 +140,6 @@ jobs:
         run: npm --prefix reports-static install
       - name: Install Internal Asset Operations UI dependencies
         run: npm --prefix crew-static install
-      - name: Prepare Device Fault backend mapping
-        run: node scripts/prepare-device-fault.mjs
-      - name: Prepare SD Client asset mapping
-        run: node scripts/prepare-sd-client.mjs
-      - name: Tighten Jira Device ID validation
-        run: node scripts/prepare-device-id-validation.mjs
-      - name: Prepare bulk Jira import cleanup
-        run: node scripts/prepare-bulk-cleanup.mjs
-      - name: Prepare CSV import reconciliation
-        run: node scripts/prepare-import-reconciliation.mjs
-      - name: Prepare large asset pagination and exact counts
-        run: node scripts/prepare-large-asset-pagination.mjs
-      - name: Prepare internal crew-to-JSM customer linking
-        run: node scripts/prepare-crew-customer-link.mjs
-      - name: Apply scale safety guards
-        run: node scripts/prepare-scale-guards.mjs
       - name: Verify Marketplace-safe manifest
         run: npm run verify:marketplace
       - name: Build Asset Manager UI

@@ -21,7 +21,7 @@ function fieldValues(value) {
   return [];
 }
 
-async function queryAllByPrefix(prefix) {
+async function queryAllByPrefix(prefix, limit = 500) {
   const values = [];
   let cursor;
   do {
@@ -30,8 +30,9 @@ async function queryAllByPrefix(prefix) {
     const page = await query.getMany();
     values.push(...page.results.map((entry) => entry.value));
     cursor = page.nextCursor;
+    if (values.length >= limit) break;
   } while (cursor);
-  return values;
+  return values.slice(0, limit);
 }
 
 async function getFields() {
@@ -55,7 +56,7 @@ async function searchDeviceIssues(deviceFieldId, organisationFieldId) {
   const fields = [deviceFieldId, organisationFieldId, 'summary', 'status', 'priority', 'created', 'resolutiondate'].filter(Boolean);
   const issues = [];
   let nextPageToken;
-  for (let guard = 0; guard < 250; guard += 1) {
+  for (let guard = 0; guard < 5; guard += 1) {
     const body = { jql, fields, maxResults: 100 };
     if (nextPageToken) body.nextPageToken = nextPageToken;
     const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {

@@ -8,6 +8,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
   const [customFields, setCustomFields] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState([]);
 
   useEffect(() => {
     invoke('getSettings')
@@ -26,10 +27,35 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
       const parsed = await readAssetImportFile(file, customFields);
       const checked = validateImportRows(parsed, existingAssets);
       setFileName(file.name);
-      setRows(checked);
+      let reconciled=checked;
+      const valid=checked.filter((row)=>!row._error);
+      if(valid.length){
+        const previewLimit=Math.min(valid.length,200);
+        const previewRows=valid.slice(0,previewLimit);
+        const matches=[];
+        const previewBatchSize=20;
+        for(let i=0;i<previewRows.length;i+=previewBatchSize){
+          const batch=previewRows.slice(i,i+previewBatchSize).map(({_row,_error,...asset})=>asset);
+          const result=await invoke('previewAssetImportReconciliation',{assets:batch});
+          matches.push(...(result||[]));
+        }
+        let matchIndex=0;
+        let validIndex=0;
+        reconciled=checked.map((row)=>{
+          if(row._error)return row;
+          const isPreviewed=validIndex<previewLimit;
+          validIndex+=1;
+          if(!isPreviewed)return {...row,_reconcile:{action:'deferred',message:'Will be reconciled safely during import.'}};
+          const match=matches?.[matchIndex++]||null;
+          return match?.action==='review'?{...row,_error:match.message,_reconcile:match}:{...row,_reconcile:match};
+        });
+        setPreview(matches||[]);
+      }else setPreview([]);
+      setRows(reconciled);
       if (!checked.length) setError('No asset rows were found in this file.');
     } catch (e) {
       setRows([]);
+      setPreview([]);
       setFileName('');
       setError(e?.message || 'Could not read this file.');
     } finally {
@@ -64,15 +90,15 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
           <input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => chooseFile(e.target.files?.[0])} disabled={busy} />
         </label>
 
-        {fileName && <div className="notice">{fileName}: {validRows.length} ready to import{invalidRows.length ? `, ${invalidRows.length} need attention` : ''}.</div>}
+        {fileName && <div className="notice">{fileName}: {validRows.length} ready to import{invalidRows.length ? `, ${invalidRows.length} need attention` : ''}.{validRows.length>200?' Large-file mode: the first 200 valid rows are previewed now; remaining rows are reconciled in safe batches during import.':''}</div>}
         {error && <div className="notice">{error}</div>}
 
         {rows.length > 0 && <div className="table-wrap" style={{ marginTop: 12 }}>
           <table>
-            <thead><tr><th>Row</th><th>Device Name</th><th>Device ID</th><th>Type</th><th>Assignment Reference</th><th>Holder</th><th>Result</th></tr></thead>
+            <thead><tr><th>Row</th><th>Device Name</th><th>Device ID</th><th>Serial</th><th>Type</th><th>Assignment Reference</th><th>Holder</th><th>Result</th></tr></thead>
             <tbody>{rows.slice(0, 200).map((row) => <tr key={`${row._row}-${row.name}`}>
-              <td>{row._row}</td><td><strong>{row.name || '—'}</strong></td><td>{row.jiraIdentifier || '—'}</td><td>{row.type || '—'}</td><td>{row.crewCode || '—'}</td><td>{row.assigneeName || '—'}</td>
-              <td>{row._error ? <span style={{ fontWeight: 600 }}>{row._error}</span> : 'Ready'}</td>
+              <td>{row._row}</td><td><strong>{row.name || '—'}</strong></td><td>{row.jiraIdentifier || '—'}</td><td>{row.serialNumber || '—'}</td><td>{row.type || '—'}</td><td>{row.crewCode || '—'}</td><td>{row.assigneeName || '—'}</td>
+              <td>{row._error ? <span style={{ fontWeight: 600 }}>{row._error}</span> : <span>{row._reconcile?.action==='merge-serial'?'Merge by serial':row._reconcile?.action==='update-device-id'?'Update existing':row._reconcile?.action==='update-name'?'Update by name':row._reconcile?.action==='deferred'?'Reconcile during import':'Create new'}{row._reconcile?.message?<small style={{display:'block'}}>{row._reconcile.message}</small>:null}</span>}</td>
             </tr>)}</tbody>
           </table>
           {rows.length > 200 && <p>Showing the first 200 of {rows.length} rows.</p>}

@@ -90,7 +90,9 @@ async function searchAssets(query) {
   }
 
   let cursor;
+  let pages = 0;
   do {
+    pages += 1;
     let request = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(SEARCH_PAGE_SIZE);
     if (cursor) request = request.cursor(cursor);
     const page = await request.getMany();
@@ -103,7 +105,7 @@ async function searchAssets(query) {
     }
     if (results.length >= SEARCH_LIMIT) break;
     cursor = page.nextCursor;
-  } while (cursor);
+  } while (cursor && pages < 5);
 
   return results
     .sort((a,b)=>String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base'}))
