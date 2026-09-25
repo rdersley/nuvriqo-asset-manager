@@ -12,6 +12,16 @@ const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
 // Jira-discovered and never confirmed by a person (edit, import or CSV merge).
 const isUncuratedJiraDiscovery = (asset) => String(asset?.notes || '').startsWith(JIRA_DISCOVERED_NOTE) && !asset?.curatedAt;
+const HUMAN_HISTORY_SOURCES = new Set(['manual', 'import', 'bulk-import', 'import-reconcile']);
+// Backfill for assets confirmed before curatedAt existed: if history shows a
+// person edited, imported or merged the asset, record curatedAt and keep it.
+async function markCuratedFromHistory(asset) {
+  const page = await kvs.query().where('key', WhereConditions.beginsWith(`${HISTORY_PREFIX}${asset.id}:`)).limit(100).getMany();
+  const event = page.results.map((e) => e.value).find((e) => HUMAN_HISTORY_SOURCES.has(e?.source));
+  if (!event) return false;
+  await kvs.set(`${ASSET_PREFIX}${asset.id}`, { ...asset, curatedAt: event.timestamp || now() });
+  return true;
+}
 const ASSET_PREFIX = 'asset:';
 const ASSET_NAME_PREFIX = 'asset-name:';
 const LINK_PREFIX = 'issue-link:';
@@ -234,14 +244,16 @@ resolver.define('bulkRemoveAssets',async({payload})=>{
   const discoveredOnly=payload?.discoveredOnly===true;
   const removeAllDiscovered=payload?.removeAllDiscovered===true;
   const cursor=clean(payload?.cursor||'')||null;
-  let targets=[];let nextCursor=null;let scanned=0;const skipped=[];
+  let targets=[];let nextCursor=null;let scanned=0;let kept=0;const skipped=[];
   if(removeAllDiscovered){
     // Cleanup of junk discovery: every target has Jira tickets by definition, so the
     // linked-ticket guard does not apply. Assets a person has confirmed are kept.
     let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
     if(cursor)q=q.cursor(cursor);
     const page=await q.getMany();scanned=page.results.length;nextCursor=page.nextCursor||null;
-    targets=page.results.map(e=>e.value).filter(isUncuratedJiraDiscovery);
+    const candidates=page.results.map(e=>e.value).filter(isUncuratedJiraDiscovery);
+    const confirmed=await Promise.all(candidates.map(markCuratedFromHistory));
+    targets=candidates.filter((_,i)=>!confirmed[i]);kept=confirmed.filter(Boolean).length;
   }else{
     // Selected assets get the same protection as single delete: anything with
     // linked or recorded Jira tickets is skipped and reported back.
@@ -261,7 +273,7 @@ resolver.define('bulkRemoveAssets',async({payload})=>{
   const removed=targets.length;
   if(removeAllDiscovered){const cfg=await getSettingsValue();if(cfg.jiraDiscoveryEnabled!==false)await kvs.set(SETTINGS_KEY,{...cfg,jiraDiscoveryEnabled:false});}
   await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);
-  return{ok:true,removed,skipped,scanned,nextCursor,complete:!nextCursor,jiraDiscoveryPaused:removeAllDiscovered};
+  return{ok:true,removed,kept,skipped,scanned,nextCursor,complete:!nextCursor,jiraDiscoveryPaused:removeAllDiscovered};
 });
 
 function reconciliationValue(value){
