@@ -1,8 +1,11 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import { guardResolver } from './auth.js';
 
-const resolver = new Resolver();
+// Internal Asset Operations handles crew personal data (emails, usernames,
+// contract dates) and rewrites asset holders, so every action is admin-only.
+const resolver = guardResolver(new Resolver(), 'all');
 const SETTINGS_KEY = 'settings:asset-manager';
 const CREW_PREFIX = 'internal-crew:';
 const CREW_ALIAS_PREFIX = 'internal-crew-alias:';

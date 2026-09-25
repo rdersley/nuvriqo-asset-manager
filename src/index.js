@@ -2,8 +2,16 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
+import { guardResolver } from './auth.js';
 
-const resolver = new Resolver();
+// Actions that change configuration, run Jira discovery or write many assets
+// at once. Everyday create/edit and guarded single delete stay open to users.
+const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets']);
+const resolver = guardResolver(new Resolver(), ADMIN_RESOLVERS);
+const BULK_REMOVE_BATCH = 25;
+const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
+// Jira-discovered and never confirmed by a person (edit, import or CSV merge).
+const isUncuratedJiraDiscovery = (asset) => String(asset?.notes || '').startsWith(JIRA_DISCOVERED_NOTE) && !asset?.curatedAt;
 const ASSET_PREFIX = 'asset:';
 const ASSET_NAME_PREFIX = 'asset-name:';
 const LINK_PREFIX = 'issue-link:';
@@ -53,6 +61,7 @@ async function saveOneAsset(supplied, source = 'manual') {
   if (!clean(supplied?.name)) throw new Error('Device name is required.');
   const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
   const asset = normaliseAsset(supplied, existing || {});
+  if (source !== 'jira-sync' && !asset.curatedAt) asset.curatedAt = asset.updatedAt || now();
   if (source !== 'jira-sync') {
     const fastImportSources=new Set(['bulk-import','import','import-reconcile']);
     if(fastImportSources.has(source)) await assertIndexedUniqueDeviceName(asset.name,asset.id);
@@ -225,25 +234,34 @@ resolver.define('bulkRemoveAssets',async({payload})=>{
   const discoveredOnly=payload?.discoveredOnly===true;
   const removeAllDiscovered=payload?.removeAllDiscovered===true;
   const cursor=clean(payload?.cursor||'')||null;
-  let targets=[];let nextCursor=null;let scanned=0;
+  let targets=[];let nextCursor=null;let scanned=0;const skipped=[];
   if(removeAllDiscovered){
+    // Cleanup of junk discovery: every target has Jira tickets by definition, so the
+    // linked-ticket guard does not apply. Assets a person has confirmed are kept.
     let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
     if(cursor)q=q.cursor(cursor);
     const page=await q.getMany();scanned=page.results.length;nextCursor=page.nextCursor||null;
-    targets=page.results.map(e=>e.value).filter(a=>String(a?.notes||'').startsWith('Discovered automatically from Jira field'));
+    targets=page.results.map(e=>e.value).filter(isUncuratedJiraDiscovery);
   }else{
-    for(const id of ids.slice(0,100)){const asset=await kvs.get(`${ASSET_PREFIX}${id}`);if(asset)targets.push(asset);}
+    // Selected assets get the same protection as single delete: anything with
+    // linked or recorded Jira tickets is skipped and reported back.
+    if(ids.length>BULK_REMOVE_BATCH)throw new Error(`Remove at most ${BULK_REMOVE_BATCH} assets per request.`);
+    const assets=(await Promise.all(ids.map(id=>kvs.get(`${ASSET_PREFIX}${id}`)))).filter(Boolean);
+    const linkedIds=new Set((await queryAllByPrefix(LINK_PREFIX)).map(l=>l?.assetId).filter(Boolean));
+    const recorded=await Promise.all(assets.map(a=>kvs.query().where('key',WhereConditions.beginsWith(`${ASSET_TICKET_PREFIX}${a.id}:`)).limit(1).getMany()));
+    assets.forEach((asset,i)=>{if(linkedIds.has(asset.id)||recorded[i].results.length)skipped.push({id:asset.id,name:asset.name||'',reason:'Linked to Jira tickets'});else targets.push(asset);});
   }
-  if(discoveredOnly)targets=targets.filter(a=>String(a?.notes||'').startsWith('Discovered automatically from Jira field'));
-  let removed=0;
-  for(const asset of targets){
+  if(discoveredOnly)targets=targets.filter(isUncuratedJiraDiscovery);
+  const source=removeAllDiscovered?'jira-cleanup':'bulk-remove';
+  await Promise.all(targets.map(async(asset)=>{
     await kvs.delete(`${ASSET_PREFIX}${asset.id}`);
     if(asset.name){const indexed=await kvs.get(nameIndexKey(asset.name));if(indexed?.assetId===asset.id)await kvs.delete(nameIndexKey(asset.name));}
-    removed+=1;
-  }
+    await addHistory(asset.id,{type:'deleted',source,message:'Asset deleted',deviceName:asset.name||''});
+  }));
+  const removed=targets.length;
   if(removeAllDiscovered){const cfg=await getSettingsValue();if(cfg.jiraDiscoveryEnabled!==false)await kvs.set(SETTINGS_KEY,{...cfg,jiraDiscoveryEnabled:false});}
   await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);
-  return{ok:true,removed,scanned,nextCursor,complete:!nextCursor,jiraDiscoveryPaused:removeAllDiscovered};
+  return{ok:true,removed,skipped,scanned,nextCursor,complete:!nextCursor,jiraDiscoveryPaused:removeAllDiscovered};
 });
 
 function reconciliationValue(value){
