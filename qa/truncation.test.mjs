@@ -137,3 +137,30 @@ test('a paused scan resumes from its token, but not after the project changed', 
   await call(main, 'syncAssetsFromJira', { restart: false });
   assert.equal(searches.at(-1).nextPageToken, undefined);
 });
+
+test('reports look up tickets for the requested assets only, in chunks, and flag truncation', async () => {
+  const ids = [];
+  for (let i = 0; i < 60; i += 1) { ids.push(`R${i}`); store.set(`asset:R${i}`, { id: `R${i}`, name: `Device ${i}`, jiraIdentifier: `RYR_${i}` }); }
+  searchHandler = (body) => (body.jql.includes('"\\"RYR_59\\""') ? { issues: [issue('SD-59', 'RYR_59')] } : { issues: [] });
+  const result = await call(main, 'getAssetReport', { assetIds: ids });
+  assert.equal(result.rows.length, 60);
+  assert.equal(result.truncated, false);
+  assert.equal(searches.length, 2, '60 identifiers are searched in chunks of 50');
+  assert.equal(result.rows.find((r) => r.assetId === 'R59').involved, 1);
+
+  searchHandler = () => ({ issues: [], nextPageToken: 'more' });
+  assert.equal((await call(main, 'getAssetReport', { assetIds: ['R1'] })).truncated, true);
+  await assert.rejects(call(main, 'getAssetReport', { assetIds: Array.from({ length: 101 }, (_, i) => `X${i}`) }), /at most 100/);
+});
+
+test('viewing a report does not rewrite existing fault history', async () => {
+  store.set('settings:asset-manager', { ...SETTINGS, jiraFaultField: { id: 'customfield_200', name: 'Fault' } });
+  store.set('asset:F1', { id: 'F1', name: 'Tablet F', jiraIdentifier: 'RYR_F' });
+  searchHandler = () => ({ issues: [{ ...issue('SD-7', 'RYR_F'), fields: { ...issue('SD-7', 'RYR_F').fields, customfield_200: 'Screen cracked' } }] });
+  await call(main, 'getAssetReport', { assetIds: ['F1'] });
+  const [key] = [...store.keys()].filter((k) => k.startsWith('fault-history:F1:'));
+  assert.ok(key, 'first view records the fault');
+  store.set(key, { ...store.get(key), firstSeen: '2026-01-01T00:00:00.000Z' });
+  await call(main, 'getAssetReport', { assetIds: ['F1'] });
+  assert.equal(store.get(key).firstSeen, '2026-01-01T00:00:00.000Z');
+});
