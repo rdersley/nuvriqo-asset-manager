@@ -1,8 +1,12 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import { createHash } from 'node:crypto';
 
 const resolver = new Resolver();
+const ASSET_NAME_PREFIX = 'asset-name:';
+// Bounded fallback for assets the indexes cannot find (see resolveIdentifiers).
+const ASSET_SCAN_PAGES = 20;
 const ASSET_PREFIX = 'asset:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const HISTORY_PREFIX = 'asset-history:';
@@ -15,20 +19,6 @@ const validIdentifier = (value) => {
   const v = normalise(value);
   return Boolean(v && !['.', '-', 'n/a', 'na', 'none', 'null', 'unknown'].includes(v));
 };
-
-async function queryAllByPrefix(prefix, limit = 300) {
-  const values = [];
-  let cursor;
-  const cap = Math.max(1, Math.min(Number(limit) || 300, 500));
-  do {
-    let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(Math.min(100, cap - values.length));
-    if (cursor) query = query.cursor(cursor);
-    const page = await query.getMany();
-    values.push(...page.results.map((entry) => entry.value));
-    cursor = page.nextCursor;
-  } while (cursor && values.length < cap);
-  return values.slice(0, cap);
-}
 
 async function settings() {
   return (await kvs.get(SETTINGS_KEY)) || {};
@@ -86,26 +76,53 @@ async function addHistory(assetId, event) {
   await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event });
 }
 
-async function resolveAsset(identifier, assets) {
-  const target = normalise(identifier);
-  return assets.find((asset) => normalise(asset.jiraIdentifier || asset.name) === target) || null;
+// Keys must match src/index.js (makeJiraAssetId, nameIndexKey).
+const jiraAssetId = (fieldId, identifier) => `AST-JIRA-${createHash('sha256').update(`${fieldId}:${normalise(identifier)}`).digest('hex').slice(0, 24).toUpperCase()}`;
+const nameIndexKey = (name) => `${ASSET_NAME_PREFIX}${Buffer.from(normalise(name), 'utf8').toString('base64url')}`;
+const assetIdentifiers = (asset) => [asset?.jiraIdentifier || asset?.name, ...(Array.isArray(asset?.jiraAliases) ? asset.jiraAliases : [])].map(normalise).filter(Boolean);
+
+// Resolve Jira identifiers to assets without loading the register: first the
+// deterministic Jira-discovery id and the Device Name index, then one bounded
+// scan for manually created assets whose Jira identifier differs from their name.
+async function resolveIdentifiers(identifiers, fieldId) {
+  const found = new Map();
+  const wanted = [...new Set(identifiers.filter(validIdentifier).map(normalise))];
+  await Promise.all(wanted.map(async (target) => {
+    const byId = fieldId ? await kvs.get(`${ASSET_PREFIX}${jiraAssetId(fieldId, target)}`) : null;
+    const indexed = await kvs.get(nameIndexKey(target));
+    const byName = indexed?.assetId ? await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`) : null;
+    const hit = [byId, byName].find((asset) => asset && (assetIdentifiers(asset).includes(target) || normalise(asset.name) === target));
+    if (hit) found.set(target, hit);
+  }));
+  let missing = wanted.filter((target) => !found.has(target));
+  let cursor;
+  for (let page = 0; missing.length && page < ASSET_SCAN_PAGES; page += 1) {
+    let query = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
+    if (cursor) query = query.cursor(cursor);
+    const result = await query.getMany();
+    for (const { value: asset } of result.results) for (const target of assetIdentifiers(asset)) if (missing.includes(target) && !found.has(target)) found.set(target, asset);
+    missing = missing.filter((target) => !found.has(target));
+    cursor = result.nextCursor;
+    if (!cursor) break;
+  }
+  return found;
 }
 
 async function issueContext(issueKey) {
   const cfg = await settings();
-  const assets = await queryAllByPrefix(ASSET_PREFIX);
   const primaryFieldId = cfg.jiraAssetField?.id || '';
   const relatedFieldId = cfg.jiraRelatedAssetField?.id || '';
   const issue = await getIssue(issueKey, [primaryFieldId, relatedFieldId]);
 
   const storedPrimary = await kvs.get(`${PRIMARY_LINK_PREFIX}${issueKey}`);
   const primaryIdentifier = primaryFieldId ? firstValue(issue.fields?.[primaryFieldId]) : '';
-  const fieldPrimary = primaryIdentifier ? await resolveAsset(primaryIdentifier, assets) : null;
-  const storedPrimaryAsset = storedPrimary?.assetId ? assets.find((asset) => asset.id === storedPrimary.assetId) : null;
+  const relatedIds = relatedFieldId ? relatedIdentifiers(issue.fields?.[relatedFieldId]) : [];
+  const resolved = await resolveIdentifiers([primaryIdentifier, ...relatedIds].filter(Boolean), primaryFieldId);
+  const fieldPrimary = primaryIdentifier ? resolved.get(normalise(primaryIdentifier)) || null : null;
+  const storedPrimaryAsset = storedPrimary?.assetId ? await kvs.get(`${ASSET_PREFIX}${storedPrimary.assetId}`) : null;
   const primaryAsset = fieldPrimary || storedPrimaryAsset || null;
 
-  const relatedIds = relatedFieldId ? relatedIdentifiers(issue.fields?.[relatedFieldId]) : [];
-  const relatedAssets = relatedIds.map((identifier) => ({ identifier, asset: assets.find((asset) => normalise(asset.jiraIdentifier || asset.name) === normalise(identifier)) || null }));
+  const relatedAssets = relatedIds.map((identifier) => ({ identifier, asset: resolved.get(normalise(identifier)) || null }));
 
   return {
     issueKey,
@@ -130,9 +147,17 @@ resolver.define('getIssueAssetContext', async ({ payload, context }) => {
 
 resolver.define('searchPanelAssets', async ({ payload }) => {
   const query = normalise(payload?.query || '');
-  const assets = await queryAllByPrefix(ASSET_PREFIX);
-  return assets
-    .filter((asset) => !query || [asset.name, asset.jiraIdentifier, asset.serialNumber, asset.model].some((value) => normalise(value).includes(query)))
+  const matches = [];
+  let cursor;
+  for (let page = 0; matches.length < 50 && page < ASSET_SCAN_PAGES; page += 1) {
+    let search = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
+    if (cursor) search = search.cursor(cursor);
+    const result = await search.getMany();
+    matches.push(...result.results.map((entry) => entry.value).filter((asset) => !query || [asset.name, asset.jiraIdentifier, asset.serialNumber, asset.model].some((value) => normalise(value).includes(query))));
+    cursor = result.nextCursor;
+    if (!cursor) break;
+  }
+  return matches
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }))
     .slice(0, 50)
     .map((asset) => ({ id: asset.id, name: asset.name, jiraIdentifier: asset.jiraIdentifier || asset.name, type: asset.type || '', status: asset.status || '', holder: asset.assigneeName || asset.crewCode || '' }));
