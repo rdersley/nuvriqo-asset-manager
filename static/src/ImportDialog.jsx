@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke } from './invoke.js';
 import { readAssetImportFile, validateImportRows } from './importUtils';
 
 export default function ImportDialog({ existingAssets, onImport, onClose }) {
