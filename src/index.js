@@ -199,7 +199,7 @@ async function searchAssetTicketsDetailed(assetId,legacyKeys=[]){
 async function searchAssetTickets(assetId,legacyKeys=[]){return(await searchAssetTicketsDetailed(assetId,legacyKeys)).tickets;}
 resolver.define('listAssetsPage',async({payload})=>{
   const query=String(payload?.query||'').trim().toLowerCase(),status=clean(payload?.status||''),type=clean(payload?.type||''),location=clean(payload?.location||''),client=clean(payload?.client||'');
-  const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));
+  const limit=Math.min(500,Math.max(1,Number(payload?.limit||100)));
   const maxScanPages=Math.min(10,Math.max(1,Number(payload?.maxScanPages||1)));
   let cursor=payload?.cursor||null,items=[],scanned=0,pages=0;
   do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();scanned+=page.results.length;pages+=1;cursor=page.nextCursor||null;for(const entry of page.results){const a=entry.value;const matchesQuery=!query||[a.id,a.name,a.jiraIdentifier,a.crewCode,a.type,a.manufacturer,a.model,a.serialNumber,a.assigneeName,a.status,a.location,a.client].some(v=>String(v||'').toLowerCase().includes(query));if(!matchesQuery)continue;if(status&&a.status!==status)continue;if(type&&a.type!==type)continue;if(location&&a.location!==location)continue;if(client&&String(a.client||'')!==String(client))continue;items.push(a);if(items.length>=limit)break;}if(items.length>=limit)break;}while(cursor&&pages<maxScanPages);
@@ -207,10 +207,10 @@ resolver.define('listAssetsPage',async({payload})=>{
 });
 resolver.define('countAssetsPage',async({payload})=>{
   const limit=Math.min(100,Math.max(1,Number(payload?.limit||100)));
-  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);
-  if(payload?.cursor)q=q.cursor(payload.cursor);
-  const page=await q.getMany();
-  const items=page.results.map(e=>e.value);
+  const maxPages=Math.min(10,Math.max(1,Number(payload?.pages||1)));
+  const items=[];let cursor=payload?.cursor||null,pages=0;
+  do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(limit);if(cursor)q=q.cursor(cursor);const result=await q.getMany();items.push(...result.results.map(e=>e.value));cursor=result.nextCursor||null;pages+=1;}while(cursor&&pages<maxPages);
+  const page={nextCursor:cursor};
   const byType={};
   for(const a of items){const key=clean(a?.type||'Other')||'Other';byType[key]=(byType[key]||0)+1;}
   return{count:items.length,nextCursor:page.nextCursor||null,inUse:items.filter(a=>['In Use','Assigned','Active'].includes(a?.status)).length,available:items.filter(a=>a?.status==='Available').length,repair:items.filter(a=>['Repair','In Repair'].includes(a?.status)).length,byType};
@@ -370,7 +370,7 @@ const REPORT_BATCH=100,REPORT_IDENTIFIER_CHUNK=50;
 resolver.define('getAssetReport',async({payload}={})=>{
   const ids=[...new Set(safeArray(payload?.assetIds).map(clean).filter(Boolean))];
   if(ids.length>REPORT_BATCH)throw new Error(`Request report rows for at most ${REPORT_BATCH} assets at a time.`);
-  const assets=ids.length?(await Promise.all(ids.map(id=>kvs.get(`${ASSET_PREFIX}${id}`)))).filter(Boolean):await queryAllByPrefix(ASSET_PREFIX,REPORT_BATCH);
+  const assets=ids.length?(await (async()=>{const out=[];for(let i=0;i<ids.length;i+=25)out.push(...await Promise.all(ids.slice(i,i+25).map(id=>kvs.get(`${ASSET_PREFIX}${id}`))));return out;})()).filter(Boolean):await queryAllByPrefix(ASSET_PREFIX,REPORT_BATCH);
   if(!assets.length)return{rows:[],truncated:false};const rows=[];let truncated=false;
   let field=null,issues=[],settings=await getSettingsValue();
   const identifiers=[...new Set(assets.flatMap(a=>[a.jiraIdentifier||a.name,...safeArray(a.jiraAliases)]).map(reconciliationValue).filter(Boolean))];

@@ -100,3 +100,20 @@ test('portal pages past 500 tickets per organisation and flags when it stops ear
   result = await call(portal, 'getPortalAssets');
   assert.equal(result.partial, true);
 });
+
+test('estate totals need one Forge invocation per 1,000 assets, not per 100', async () => {
+  filler(2500);
+  let cursor = null, total = 0, invocations = 0;
+  do { const page = await call(main, 'countAssetsPage', { cursor, limit: 100, pages: 10 }); total += page.count; cursor = page.nextCursor; invocations += 1; } while (cursor);
+  assert.equal(total, 2500);
+  assert.equal(invocations, 3);
+  const single = await call(main, 'countAssetsPage', { limit: 100 });
+  assert.equal(single.count, 100, 'callers that do not ask for more pages keep the old behaviour');
+});
+
+test('the report loader can page the register 500 assets at a time', async () => {
+  filler(1200);
+  const page = await call(main, 'listAssetsPage', { limit: 500, maxScanPages: 5 });
+  assert.equal(page.items.length, 500);
+  assert.ok(page.nextCursor);
+});
