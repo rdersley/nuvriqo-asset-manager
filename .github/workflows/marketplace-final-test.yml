@@ -65,6 +65,10 @@ jobs:
 
       - name: Switch to Marketplace manifest
         run: cp manifest.marketplace.yml manifest.yml
+      - name: Remove internal-only modules
+        # Forge lint checks every file in src/. The Portal+ publisher writes a project property,
+        # which needs manage:jira-project; only the internal manifest declares it.
+        run: rm -f src/portal-plus-publisher.js src/portal-plus-refresh.js
 
       - name: Forge lint Marketplace descriptor
         shell: bash
