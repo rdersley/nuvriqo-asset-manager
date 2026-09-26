@@ -61,6 +61,8 @@ jobs:
         run: npm --prefix static test
       - name: Run QA regression simulations
         run: npm run qa:test
+      - name: Run internal-edition UI tests
+        run: npm run qa:internal
       - name: Build Asset Manager UI
         run: npm --prefix static run build
       - name: Build Device field UI

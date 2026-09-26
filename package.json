@@ -8,12 +8,13 @@
     "build": "npm --prefix static run build && npm --prefix field-static run build && npm --prefix panel-static run build && npm --prefix split-static run build && npm --prefix portal-static run build && npm --prefix crew-static run build",
     "build:marketplace": "npm --prefix static run build && npm --prefix field-static run build && npm --prefix panel-static run build && npm --prefix split-static run build && npm --prefix portal-static run build",
     "test": "npm --prefix static test",
-    "qa:test": "node --test --experimental-test-module-mocks qa/qa-simulations.test.mjs qa/auth.test.mjs qa/bulk-remove.test.mjs qa/csv.test.mjs qa/truncation.test.mjs static/src/reportData.test.mjs qa/limits.test.mjs qa/portal-plus-provider.test.mjs qa/portal-plus-publisher.test.mjs static/src/invoke.test.mjs",
+    "qa:test": "node --test --experimental-test-module-mocks qa/qa-simulations.test.mjs qa/auth.test.mjs qa/bulk-remove.test.mjs qa/csv.test.mjs qa/truncation.test.mjs static/src/reportData.test.mjs qa/limits.test.mjs qa/portal-plus-provider.test.mjs qa/portal-plus-publisher.test.mjs static/src/invoke.test.mjs qa/crew.test.mjs",
     "qa:live": "node qa/live-jira-smoke.mjs",
     "qa:browser": "playwright test qa/browser-sandbox.spec.mjs",
-    "qa": "npm test && npm run qa:test",
+    "qa": "npm test && npm run qa:test && npm run qa:internal",
     "verify:marketplace": "node scripts/verify-marketplace-release.mjs",
-    "validate": "node --check src/auth.js && node --check src/index.js && node --check src/ticket-sync.js && node --check src/issue-panel.js && node --check src/device-split.js && node --check src/portal-assets.js && node --check src/portal-plus-provider.js && node --check src/portal-plus-publisher.js && node --check src/portal-plus-refresh.js && node --check src/crew.js && npm run qa && npm run build && npm run verify:marketplace"
+    "validate": "node --check src/auth.js && node --check src/index.js && node --check src/ticket-sync.js && node --check src/issue-panel.js && node --check src/device-split.js && node --check src/portal-assets.js && node --check src/portal-plus-provider.js && node --check src/portal-plus-publisher.js && node --check src/portal-plus-refresh.js && node --check src/crew.js && npm run qa && npm run build && npm run verify:marketplace",
+    "qa:internal": "node --test --experimental-test-module-mocks crew-static/src/crewReport.test.mjs"
   },
   "dependencies": {
     "@forge/api": "^5.0.0",
