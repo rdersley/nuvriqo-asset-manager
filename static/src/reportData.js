@@ -11,7 +11,7 @@ const MAX_ASSET_PAGES = 80;
 
 // Runs getAssetReport for each batch with a few calls in flight. A failed or truncated
 // batch marks the result partial instead of failing the whole report.
-async function reportRowsFor(batches, onBatch) {
+async function reportRowsFor(batches, onBatch, { recordHistory = true } = {}) {
   const rows = [];
   let partial = false;
   let next = 0;
@@ -19,7 +19,7 @@ async function reportRowsFor(batches, onBatch) {
     while (next < batches.length) {
       const batch = batches[next++];
       try {
-        const result = await invoke('getAssetReport', { assetIds: batch.map((asset) => asset.id) });
+        const result = await invoke('getAssetReport', { assetIds: batch.map((asset) => asset.id), recordHistory });
         rows.push(...(result?.rows || []));
         if (result?.truncated) partial = true;
       } catch {
@@ -36,7 +36,7 @@ async function reportRowsFor(batches, onBatch) {
 export async function loadReportRows(assets) {
   const batches = [];
   for (let i = 0; i < assets.length; i += BATCH) batches.push(assets.slice(i, i + BATCH));
-  return reportRowsFor(batches);
+  return reportRowsFor(batches, undefined, { recordHistory: false });
 }
 
 // Every asset in the register plus its report row, paged so no single Forge call

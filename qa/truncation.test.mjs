@@ -28,12 +28,13 @@ let fields = [];
 let searchHandler = () => ({ issues: [] });
 let issueFields = {};
 const searches = [];
+let fieldListCalls = 0;
 const json = (body) => ({ ok: true, status: 200, json: async () => body });
 mock.module('@forge/api', {
   defaultExport: { asUser: () => ({ requestJira: async (path, options = {}) => {
     const url = String(path);
     if (url.startsWith('/rest/api/3/mypermissions')) return json({ permissions: { ADMINISTER: { havePermission: true } } });
-    if (url === '/rest/api/3/field') return json(fields);
+    if (url === '/rest/api/3/field') { fieldListCalls += 1; return json(fields); }
     if (url.startsWith('/rest/api/3/search/jql')) { const body = JSON.parse(options.body); searches.push(body); return json(searchHandler(body)); }
     if (url.startsWith('/rest/api/3/issue/')) return json({ fields: issueFields });
     throw new Error(`Unexpected Jira call ${url}`);
@@ -163,4 +164,17 @@ test('viewing a report does not rewrite existing fault history', async () => {
   store.set(key, { ...store.get(key), firstSeen: '2026-01-01T00:00:00.000Z' });
   await call(main, 'getAssetReport', { assetIds: ['F1'] });
   assert.equal(store.get(key).firstSeen, '2026-01-01T00:00:00.000Z');
+});
+
+test('the asset list Fault column reads without writing fault history, and fetches the field list once per batch', async () => {
+  store.set('settings:asset-manager', { ...SETTINGS, jiraFaultField: { id: 'customfield_200', name: 'Fault' } });
+  const ids = [];
+  for (let i = 0; i < 80; i += 1) { ids.push(`L${i}`); store.set(`asset:L${i}`, { id: `L${i}`, name: `List ${i}`, jiraIdentifier: `LST_${i}` }); }
+  searchHandler = () => ({ issues: [{ ...issue('SD-8', 'LST_1'), fields: { ...issue('SD-8', 'LST_1').fields, customfield_200: 'Battery' } }] });
+  fieldListCalls = 0;
+  const result = await call(main, 'getAssetReport', { assetIds: ids, recordHistory: false });
+  assert.equal(searches.length, 2, '80 identifiers are searched in two chunks');
+  assert.equal(fieldListCalls, 1, 'one Jira field-list request per batch, not one per chunk');
+  assert.equal(result.rows.find((r) => r.assetId === 'L1').total, 1);
+  assert.equal([...store.keys()].filter((k) => k.startsWith('fault-history:')).length, 0);
 });
