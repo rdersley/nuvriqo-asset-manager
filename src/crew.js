@@ -53,18 +53,29 @@ function fieldValues(v) {
 }
 const getSettings = async () => (await kvs.get(SETTINGS_KEY)) || {};
 
-async function searchCrewTickets(settings) {
-  const f = settings.jiraCrewCodeField; if (!f?.id) return [];
+// One bounded window of crew-code tickets. The crew report pages through these from the UI.
+async function searchCrewTicketPage(settings, nextPageToken = null, maxPages = 10) {
+  const f = settings.jiraCrewCodeField; if (!f?.id) return { issues: [], nextPageToken: null };
   const numericId = String(f.id).replace('customfield_','');
   const fields = [f.id, settings.jiraAssetField?.id, 'summary','status','created','resolutiondate','issuetype','priority'].filter(Boolean);
-  const issues = []; let nextPageToken; let guard=0;
+  const issues = []; let token = nextPageToken; let pages = 0; const deadline = Date.now() + 15000;
   do {
-    const body = { jql:`cf[${numericId}] is not EMPTY ORDER BY created DESC`, fields, maxResults:100, ...(nextPageToken ? {nextPageToken}: {}) };
+    const body = { jql:`cf[${numericId}] is not EMPTY ORDER BY created DESC`, fields, maxResults:100, ...(token ? {nextPageToken: token}: {}) };
     const r = await api.asUser().requestJira(route`/rest/api/3/search/jql`, { method:'POST', headers:{Accept:'application/json','Content-Type':'application/json'}, body:JSON.stringify(body) });
     if (!r.ok) throw new Error(`Crew ticket lookup failed with status ${r.status}.`);
-    const data = await r.json(); issues.push(...safeArray(data.issues)); nextPageToken = data.nextPageToken || null; guard+=1;
-  } while (nextPageToken && guard<5);
-  return issues;
+    const data = await r.json(); issues.push(...safeArray(data.issues)); token = data.nextPageToken || null; pages += 1;
+  } while (token && pages < maxPages && Date.now() < deadline);
+  return { issues, nextPageToken: token };
+}
+// Up to maxPages KVS pages from cursor, optionally filtered and slimmed.
+async function pageOf(prefix, cursor, maxPages, keep = () => true, shape = (v) => v) {
+  const items = []; let next = cursor || null; let pages = 0;
+  do {
+    let q = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100); if (next) q = q.cursor(next);
+    const r = await q.getMany(); for (const e of r.results) if (keep(e.value)) items.push(shape(e.value));
+    next = r.nextCursor || null; pages += 1;
+  } while (next && pages < maxPages);
+  return { items, nextCursor: next };
 }
 function identityValues(r) {
   const email = clean(r?.email || ''); const emailUser = email.includes('@') ? email.split('@')[0] : '';
@@ -113,30 +124,44 @@ resolver.define('importCrew', async ({payload}) => {
 resolver.define('linkCrewCustomers',async({payload})=>{
   const retry=payload?.retry===true;
   const limit=Math.min(25,Math.max(1,Number(payload?.limit||20)));
-  const crewRows=(await entries(CREW_PREFIX,500)).map(e=>e.value);
-  const candidates=crewRows.filter(c=>clean(c?.email||'')&&(retry||!c?.jsmCustomerLinkStatus||c.jsmCustomerLinkStatus==='lookup-error')).slice(0,limit);
-  const assets=(await entries(ASSET_PREFIX,500)).map(e=>e.value);
-  let linked=0,notFound=0,multiple=0,errors=0,assetsLinked=0;
+  // Candidates come from the whole crew register; device holders are updated afterwards by
+  // applyCrewCustomerLinks, which pages through every asset.
+  const eligible=(await entries(CREW_PREFIX,20000)).map(e=>e.value).filter(c=>clean(c?.email||'')&&(retry||!c?.jsmCustomerLinkStatus||c.jsmCustomerLinkStatus==='lookup-error'));
+  const candidates=eligible.slice(0,limit);
+  let linked=0,notFound=0,multiple=0,errors=0;
   for(const crew of candidates){
     const result=await lookupJsmCustomerByEmail(crew.email);
     const updated={...crew,jsmCustomerLinkStatus:result.status,jsmCustomerAccountId:result.accountId||'',jsmCustomerDisplayName:result.displayName||'',jsmCustomerAccountType:result.accountType||'',jsmCustomerLinkedAt:result.status==='linked'?now():(crew.jsmCustomerLinkedAt||'')};
     await kvs.set(crewKey(crew.crewCode),updated);
-    if(result.status==='linked'){linked+=1;for(const asset of assets){if(normalise(asset?.crewCode)!==normalise(crew.crewCode))continue;if(asset.assigneeAccountId)continue;const currentName=clean(asset.assigneeName||'');if(currentName&&normalise(currentName)!==normalise(crew.name)&&normalise(currentName)!==normalise(crew.crewCode))continue;await kvs.set(`${ASSET_PREFIX}${asset.id}`,{...asset,assigneeAccountId:result.accountId,assigneeName:result.displayName||crew.name||crew.crewCode,updatedAt:now()});await addHistory(asset.id,{type:'jsm-customer-linked',source:'crew-customer-link',message:`Linked holder to JSM customer ${result.displayName||crew.email}`,crewCode:crew.crewCode,accountId:result.accountId});assetsLinked+=1;}}
-    else if(result.status==='not-found')notFound+=1;else if(result.status==='multiple')multiple+=1;else errors+=1;
+    if(result.status==='linked')linked+=1;else if(result.status==='not-found')notFound+=1;else if(result.status==='multiple')multiple+=1;else errors+=1;
   }
-  const remaining=crewRows.filter(c=>clean(c?.email||'')&&(retry||!c?.jsmCustomerLinkStatus||c.jsmCustomerLinkStatus==='lookup-error')).length-candidates.length;
-  return{processed:candidates.length,linked,notFound,multiple,errors,assetsLinked,remaining:Math.max(0,remaining)};
+  return{processed:candidates.length,linked,notFound,multiple,errors,remaining:Math.max(0,eligible.length-candidates.length)};
 });
 
-resolver.define('getCrewReport', async () => {
-  const settings=await getSettings(); if(!settings.jiraCrewCodeField?.id) throw new Error('Map the Jira assignment reference field in Asset Manager configuration before using Crew Tracking.');
-  const [crewRows,assets,issues]=await Promise.all([values(CREW_PREFIX),values(ASSET_PREFIX),searchCrewTickets(settings)]);
-  const map=new Map(crewRows.map(c=>[normalise(c.crewCode),{...c,currentDevices:[],historicalDevices:new Set(),tickets:[]}])) ;
-  const ensure=(code)=>{const k=normalise(code);if(!k)return null;if(!map.has(k))map.set(k,{crewCode:clean(code),name:'',location:'',email:'',status:'Not in imported crew list',currentDevices:[],historicalDevices:new Set(),tickets:[]});return map.get(k);};
-  for(const a of assets){if(!a?.crewCode)continue;const c=ensure(a.crewCode),id=a.jiraIdentifier||a.name||a.id;c.currentDevices.push({id:a.id,name:a.name||id,identifier:id,type:a.type||'Unspecified',status:a.status||'',location:a.location||''});if(id)c.historicalDevices.add(id);}
-  for(const issue of issues){for(const code of fieldValues(issue.fields?.[settings.jiraCrewCodeField.id])){const c=ensure(code);if(!c)continue;const dev=settings.jiraAssetField?.id?fieldValues(issue.fields?.[settings.jiraAssetField.id]):[];dev.forEach(d=>c.historicalDevices.add(d));c.tickets.push({key:issue.key,summary:issue.fields?.summary||'',status:issue.fields?.status?.name||'',issueType:issue.fields?.issuetype?.name||'',priority:issue.fields?.priority?.name||'',created:issue.fields?.created||'',resolved:issue.fields?.resolutiondate||'',devices:dev});}}
-  return [...map.values()].map(c=>{const tm=new Map();for(const d of c.currentDevices){const type=clean(d.type)||'Unspecified',k=normalise(type)||'unspecified';if(!tm.has(k))tm.set(k,{type,count:0,devices:[]});const g=tm.get(k);g.count++;g.devices.push(d);}const currentDeviceTypes=[...tm.values()].sort((a,b)=>String(a.type).localeCompare(String(b.type),undefined,{sensitivity:'base'}));const duplicateDeviceTypes=currentDeviceTypes.filter(g=>g.count>1);return {...c,historicalDevices:[...c.historicalDevices],currentDeviceTypes,duplicateDeviceTypes,currentDeviceCount:c.currentDevices.length,currentDeviceTypeCount:currentDeviceTypes.length,historicalDeviceCount:c.historicalDevices.size,ticketCount:c.tickets.length,reviewRequired:duplicateDeviceTypes.length>0,unreturnedIndicator:duplicateDeviceTypes.reduce((s,g)=>s+Math.max(0,g.count-1),0)};}).sort((a,b)=>a.reviewRequired!==b.reviewRequired?(a.reviewRequired?-1:1):String(a.crewCode).localeCompare(String(b.crewCode),undefined,{sensitivity:'base'}));
+// Give each linked crew member's devices their JSM customer identity, 1,000 assets per call.
+// Never overwrites an existing account or a holder name that belongs to someone else.
+resolver.define('applyCrewCustomerLinks',async({payload})=>{
+  const {items:assets,nextCursor}=await pageOf(ASSET_PREFIX,payload?.cursor,10,(a)=>clean(a?.crewCode)&&!a?.assigneeAccountId);
+  const crewCache=new Map();let assetsLinked=0;
+  for(const asset of assets){
+    const code=normalise(asset.crewCode);if(!crewCache.has(code))crewCache.set(code,await kvs.get(crewKey(asset.crewCode)));
+    const crew=crewCache.get(code);if(crew?.jsmCustomerLinkStatus!=='linked'||!crew.jsmCustomerAccountId)continue;
+    const currentName=clean(asset.assigneeName||'');if(currentName&&normalise(currentName)!==normalise(crew.name)&&normalise(currentName)!==normalise(crew.crewCode))continue;
+    await kvs.set(`${ASSET_PREFIX}${asset.id}`,{...asset,assigneeAccountId:crew.jsmCustomerAccountId,assigneeName:crew.jsmCustomerDisplayName||crew.name||crew.crewCode,updatedAt:now()});
+    await addHistory(asset.id,{type:'jsm-customer-linked',source:'crew-customer-link',message:`Linked holder to JSM customer ${crew.jsmCustomerDisplayName||crew.email}`,crewCode:crew.crewCode,accountId:crew.jsmCustomerAccountId});assetsLinked+=1;
+  }
+  return{assetsLinked,nextCursor};
 });
+
+// Crew report inputs, paged so no single call reads the whole register. The UI joins them
+// (crew-static/src/crewReport.js).
+resolver.define('getCrewReportConfig', async () => {
+  const settings=await getSettings(); if(!settings.jiraCrewCodeField?.id) throw new Error('Map the Jira assignment reference field in Asset Manager configuration before using Crew Tracking.');
+  return { crewCodeFieldId: settings.jiraCrewCodeField.id, assetFieldId: settings.jiraAssetField?.id || '' };
+});
+resolver.define('getCrewPage', async ({payload}) => pageOf(CREW_PREFIX, payload?.cursor, 10));
+resolver.define('getCrewAssetPage', async ({payload}) => pageOf(ASSET_PREFIX, payload?.cursor, 10, (a)=>clean(a?.crewCode), (a)=>({id:a.id,name:a.name,jiraIdentifier:a.jiraIdentifier,crewCode:a.crewCode,type:a.type,status:a.status,location:a.location})));
+resolver.define('getCrewTicketPage', async ({payload}) => searchCrewTicketPage(await getSettings(), payload?.nextPageToken || null));
 resolver.define('deleteCrew',async({payload})=>{const code=clean(payload?.crewCode||'');if(!code)throw new Error('Crew code is required.');const old=await kvs.get(crewKey(code));for(const a of safeArray(old?.identityAliases)){const x=await kvs.get(crewAliasKey(a));if(x?.crewCode&&normalise(x.crewCode)===normalise(code))await kvs.delete(crewAliasKey(a));}await kvs.delete(crewKey(code));return{deleted:true};});
 
 async function findAsset(identifier,deviceCode='') {
@@ -156,7 +181,11 @@ async function createVposAsset({deviceIdentifier,deviceCode,crew,lastLoginAt,sou
 
 // Remove legacy reconciliation batches incrementally. Assets, crew and history are never touched.
 resolver.define('cleanupDeviceUsageStorage',async({payload})=>{
-  const limit=Math.min(100,Math.max(10,Number(payload?.limit||100)));const old=await entries(USAGE_BATCH_PREFIX,limit);for(const e of old)await kvs.delete(e.key);const remaining=(await entries(USAGE_BATCH_PREFIX,1)).length>0;return{deleted:old.length,remaining};
+  const limit=Math.min(500,Math.max(10,Number(payload?.limit||100)));const old=await entries(USAGE_BATCH_PREFIX,limit);for(const e of old)await kvs.delete(e.key);
+  // Exceptions left behind by earlier import sessions.
+  const current=(await kvs.get(USAGE_SESSION_KEY))?.sessionId;const keepPrefix=current?`${USAGE_EXCEPTION_PREFIX}${current}:`:null;
+  const stale=(await entries(USAGE_EXCEPTION_PREFIX,1000)).filter(e=>!keepPrefix||!e.key.startsWith(keepPrefix)).slice(0,Math.max(0,limit-old.length));for(const e of stale)await kvs.delete(e.key);
+  const remaining=(await entries(USAGE_BATCH_PREFIX,1)).length>0||(stale.length>0&&stale.length>=limit-old.length);return{deleted:old.length+stale.length,remaining};
 });
 
 resolver.define('beginDeviceUsageImport',async({payload})=>{
@@ -180,8 +209,8 @@ resolver.define('importDeviceUsageBatch',async({payload})=>{
 });
 resolver.define('getUsageReconciliation',async({payload})=>{
   const s=await kvs.get(USAGE_SESSION_KEY);if(!s?.sessionId)return{rows:[],importedCount:0,reviewCount:0,createdCount:0,mismatchCount:0,assignedCount:0,matchedCount:0,notInCrewListCount:0,totalRows:0,filteredCount:0,importedAt:null};
-  let rows=(await values(`${USAGE_EXCEPTION_PREFIX}${s.sessionId}:`));const q=normalise(payload?.query||'');if(q)rows=rows.filter(r=>[r.deviceIdentifier,r.deviceCode,r.crewCode,r.resolvedCrewCode,r.crewName,r.assignedCrewCode,r.assetName,r.assetType,r.assetLocation].some(v=>normalise(v).includes(q)));const filteredCount=rows.length,offset=Math.max(0,Number(payload?.offset||0)),limit=Math.min(500,Math.max(1,Number(payload?.limit||250)));return{rows:rows.slice(offset,offset+limit),importedCount:Number(s.importedRows||0),reviewCount:Number(s.reviewCount||0),createdCount:Number(s.createdCount||0),mismatchCount:Number(s.mismatchCount||0),assignedCount:Number(s.assignedCount||0),matchedCount:Number(s.matchedCount||0),notInCrewListCount:Number(s.unknownCrewCount||0),missingAssetCount:0,totalRows:rows.length,filteredCount,offset,limit,importedAt:s.completedAt||s.startedAt||null,sourceFile:s.sourceFile||'',sourceRows:s.sourceRows||0,skippedNoLogin:s.skippedNoLogin||0};
+  const all=await values(`${USAGE_EXCEPTION_PREFIX}${s.sessionId}:`,10000);const partial=all.length>=10000;let rows=all;const q=normalise(payload?.query||'');if(q)rows=rows.filter(r=>[r.deviceIdentifier,r.deviceCode,r.crewCode,r.resolvedCrewCode,r.crewName,r.assignedCrewCode,r.assetName,r.assetType,r.assetLocation].some(v=>normalise(v).includes(q)));const filteredCount=rows.length,offset=Math.max(0,Number(payload?.offset||0)),limit=Math.min(500,Math.max(1,Number(payload?.limit||250)));return{partial,rows:rows.slice(offset,offset+limit),importedCount:Number(s.importedRows||0),reviewCount:Number(s.reviewCount||0),createdCount:Number(s.createdCount||0),mismatchCount:Number(s.mismatchCount||0),assignedCount:Number(s.assignedCount||0),matchedCount:Number(s.matchedCount||0),notInCrewListCount:Number(s.unknownCrewCount||0),missingAssetCount:0,totalRows:rows.length,filteredCount,offset,limit,importedAt:s.completedAt||s.startedAt||null,sourceFile:s.sourceFile||'',sourceRows:s.sourceRows||0,skippedNoLogin:s.skippedNoLogin||0};
 });
-resolver.define('clearDeviceUsage',async()=>{const s=await kvs.get(USAGE_SESSION_KEY);if(s?.sessionId){const ex=await entries(`${USAGE_EXCEPTION_PREFIX}${s.sessionId}:`,100);for(const e of ex)await kvs.delete(e.key);}await kvs.delete(USAGE_SESSION_KEY);return{deleted:true};});
+resolver.define('clearDeviceUsage',async()=>{const s=await kvs.get(USAGE_SESSION_KEY);if(s?.sessionId){const ex=await entries(`${USAGE_EXCEPTION_PREFIX}${s.sessionId}:`,1000);for(const e of ex)await kvs.delete(e.key);if(ex.length>=1000)return{deleted:ex.length,remaining:true};}await kvs.delete(USAGE_SESSION_KEY);return{deleted:true,remaining:false};});
 
 export const handler=resolver.getDefinitions();
