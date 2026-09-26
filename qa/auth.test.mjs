@@ -55,7 +55,7 @@ test('"all" guards every resolver', async () => {
 test('backends register the expected admin guards', () => {
   const backend = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
   const crew = fs.readFileSync(new URL('../src/crew.js', import.meta.url), 'utf8');
-  for (const key of ['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'publishPortalPlusSnapshot']) assert.match(backend, new RegExp(`ADMIN_RESOLVERS = new Set\\(\\[[^\\]]*'${key}'`));
+  for (const key of ['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets']) assert.match(backend, new RegExp(`ADMIN_RESOLVERS = new Set\\(\\[[^\\]]*'${key}'`));
   assert.match(backend, /guardResolver\(new Resolver\(\), ADMIN_RESOLVERS\)/);
   assert.match(crew, /guardResolver\(new Resolver\(\), 'all'\)/);
 });

@@ -3,11 +3,10 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 import { guardResolver } from './auth.js';
-import { refreshPortalPlusSnapshot, PORTAL_PLUS_STATUS_KEY } from './portal-plus-publisher.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
-const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'publishPortalPlusSnapshot']);
+const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets']);
 const resolver = guardResolver(new Resolver(), ADMIN_RESOLVERS);
 const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
@@ -217,8 +216,6 @@ resolver.define('countAssetsPage',async({payload})=>{
   return{count:items.length,nextCursor:page.nextCursor||null,inUse:items.filter(a=>['In Use','Assigned','Active'].includes(a?.status)).length,available:items.filter(a=>a?.status==='Available').length,repair:items.filter(a=>['Repair','In Repair'].includes(a?.status)).length,byType};
 });
 resolver.define('syncAssetsFromJira',async({payload})=>syncAssetsFromJira({restart:Boolean(payload?.restart)}));
-resolver.define('publishPortalPlusSnapshot',async()=>refreshPortalPlusSnapshot());
-resolver.define('getPortalPlusStatus',async()=>(await kvs.get(PORTAL_PLUS_STATUS_KEY))||null);
 resolver.define('getSyncStatus',async()=>await kvs.get(SYNC_PROGRESS_KEY)||await kvs.get(SYNC_KEY)||null);
 resolver.define('getJiraCustomFields',async()=>getJiraCustomFields());
 resolver.define('getJiraProjects',async()=>getJiraProjects());

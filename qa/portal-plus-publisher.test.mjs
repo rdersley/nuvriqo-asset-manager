@@ -95,3 +95,24 @@ test('portal organisation lookup is scoped to the signed-in account', async () =
   assert.equal(calls.some((c) => c.url.startsWith('/rest/servicedeskapi/organization')), false);
   assert.match(empty.reason, /not a member/);
 });
+
+test('the publisher is reachable only from the internal scheduled-trigger function', async () => {
+  const fs = await import('node:fs');
+  const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+  const shared = ['../src/index.js', '../src/portal-assets.js', '../src/ticket-sync.js', '../src/issue-panel.js', '../src/device-split.js', '../src/auth.js'];
+  for (const file of shared) assert.doesNotMatch(read(file), /portal-plus-publisher/, `${file} must not import the publisher`);
+  assert.match(read('../src/portal-plus-refresh.js'), /from '\.\/portal-plus-publisher\.js'/);
+  assert.doesNotMatch(read('../manifest.marketplace.yml'), /portal-plus-refresh|manage:jira-project/);
+  assert.match(read('../manifest.yml'), /handler: portal-plus-refresh\.handler/);
+});
+
+test('Marketplace workflows remove the internal-only publisher after switching manifests', async () => {
+  const fs = await import('node:fs');
+  for (const file of ['../.github/workflows/marketplace-final-test.yml', '../.github/workflows/release-marketplace.yml']) {
+    const workflow = fs.readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    const switchAt = workflow.indexOf('cp manifest.marketplace.yml manifest.yml');
+    const removeAt = workflow.indexOf('rm -f src/portal-plus-publisher.js src/portal-plus-refresh.js');
+    const lintAt = workflow.indexOf('forge lint');
+    assert.ok(switchAt > 0 && removeAt > switchAt && lintAt > removeAt, `${file}: remove after the manifest switch and before lint`);
+  }
+});
