@@ -49,6 +49,18 @@ npm run build:marketplace
 
 The production release workflow uses the Marketplace manifest and must only be run after the final acceptance gate in `RELEASE_CHECKLIST.md` is complete.
 
+### Licensing
+
+The Marketplace edition is a paid app: `manifest.marketplace.yml` sets `app.licensing.enabled: true`. Every Marketplace resolver checks the licence from the Forge invocation context (no extra Jira or storage calls). In the Forge production environment a missing or inactive licence is refused and the screens show an "Asset Manager licence inactive" message; asset data is kept. Development and staging installations are never blocked. `npm run verify:marketplace` fails if licensing is not enabled, if a Marketplace resolver is not licence-wrapped, or if a Marketplace module imports an internal-only module (`crew.js`, `portal-plus-publisher.js`, `portal-plus-refresh.js`); the release workflows delete those files before `forge lint` and deploy.
+
+## Limits
+
+Resolvers are bounded so one call stays inside Forge execution time and per-installation rate limits on large sites. The caps customers can notice:
+
+- **Per-prefix storage reads: 1,000 records.** The shared `queryAllByPrefix` helper reads at most 1,000 records for one key prefix in a single call. This bounds, for example, the activity history and fault history shown for one asset, and the number of distinct indexed clients offered as client options.
+- **Client options: 10 storage pages.** `getJiraClientOptions` combines up to 1,000 indexed client values with client values read from at most 10 pages of the asset register (100 assets per page, so the first 1,000 assets). On larger registers a client that appears only on assets outside that window, and is not in the client index, is not offered in the Client filter or picker.
+- **Device search: 2,000 assets.** Substring search in the Device field scans at most 20 pages (2,000 assets). An exact Device Name or Jira Device ID match is always found by key.
+
 ## Asset model
 
 Core fields include internal asset ID, unique Device Name, authoritative Jira Device ID, client, type, manufacturer, model, serial number, optional Jira/JSM account identity, free-text holder/assignment reference, status, location, purchase date, warranty expiry, notes and configurable custom fields.

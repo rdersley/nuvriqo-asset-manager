@@ -1,10 +1,11 @@
 import Resolver from '@forge/resolver';
+import { licensedResolver } from './licence.js';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 import { buildPortalPlusAssetModule } from './portal-plus-provider.js';
 
-const resolver = new Resolver();
+const resolver = licensedResolver(new Resolver());
 const SETTINGS_KEY = 'settings:asset-manager';
 const ASSET_PREFIX = 'asset:';
 const ASSET_NAME_PREFIX = 'asset-name:';

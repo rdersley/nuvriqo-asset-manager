@@ -1,9 +1,10 @@
 import Resolver from '@forge/resolver';
+import { licensedResolver } from './licence.js';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 
-const resolver = new Resolver();
+const resolver = licensedResolver(new Resolver());
 const ASSET_NAME_PREFIX = 'asset-name:';
 // Bounded fallback for assets the indexes cannot find (see resolveIdentifiers).
 const ASSET_SCAN_PAGES = 20;

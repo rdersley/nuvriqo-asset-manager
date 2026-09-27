@@ -1,9 +1,10 @@
 import Resolver from '@forge/resolver';
+import { licensedResolver } from './licence.js';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 
-const resolver = new Resolver();
+const resolver = licensedResolver(new Resolver());
 const ASSET_PREFIX = 'asset:';
 const ASSET_NAME_PREFIX = 'asset-name:';
 const SETTINGS_KEY = 'settings:asset-manager';

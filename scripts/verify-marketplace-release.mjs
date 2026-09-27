@@ -31,6 +31,34 @@ for (const token of forbidden) if (manifest.toLowerCase().includes(token.toLower
 const unnecessaryMarketplaceScopes = ['read:application-role:jira', 'read:group:jira'];
 for (const scope of unnecessaryMarketplaceScopes) if (manifest.includes(scope)) failures.push(`Marketplace manifest contains unnecessary scope: ${scope}`);
 
+// Paid listing: Forge only passes context.license when licensing is enabled in the descriptor.
+if (!/^app:\s*\n(?:[ \t]+.*\n)*?[ \t]+licensing:\s*\n[ \t]+enabled:\s*true\b/m.test(manifest)) failures.push('Marketplace manifest must set app.licensing.enabled: true.');
+
+// Every Marketplace function must enforce the licence, and none may pull in internal-only modules
+// (the release workflows delete them before forge lint/deploy).
+const INTERNAL_ONLY_MODULES = ['crew.js', 'portal-plus-publisher.js', 'portal-plus-refresh.js'];
+const srcFile = (name) => new URL(`../src/${name}`, import.meta.url);
+const handlerFiles = [...manifest.matchAll(/handler:\s*([\w-]+)\.handler/g)].map((m) => `${m[1]}.js`);
+if (!handlerFiles.length) failures.push('Marketplace manifest declares no function handlers.');
+const importsOf = (name) => [...fs.readFileSync(srcFile(name), 'utf8').matchAll(/(?:\bfrom\s+|\bimport\s*\(?\s*)['"]\.\/([\w.-]+)['"]/g)].map((m) => m[1]);
+const seen = new Set();
+const walk = (name, from) => {
+  if (INTERNAL_ONLY_MODULES.includes(name)) failures.push(`${from} pulls in internal-only module src/${name}`);
+  if (seen.has(name)) return;
+  seen.add(name);
+  if (!fs.existsSync(srcFile(name))) { failures.push(`Marketplace module src/${name} does not exist`); return; }
+  for (const dep of importsOf(name)) walk(dep, `src/${name}`);
+};
+for (const file of handlerFiles) {
+  walk(file, 'manifest.marketplace.yml');
+  if (fs.existsSync(srcFile(file)) && !/licensedResolver\(new Resolver\(\)\)/.test(fs.readFileSync(srcFile(file), 'utf8'))) failures.push(`src/${file} must wrap its resolver with licensedResolver()`);
+}
+for (const workflow of ['release-marketplace.yml', 'marketplace-final-test.yml']) {
+  const text = fs.readFileSync(new URL(`../.github/workflows/${workflow}`, import.meta.url), 'utf8');
+  const removal = text.match(/Remove internal-only modules[\s\S]*?run:\s*rm -f ([^\n]+)/);
+  for (const module of INTERNAL_ONLY_MODULES) if (!removal || !removal[1].trim().split(/\s+/).includes(`src/${module}`)) failures.push(`${workflow} must remove src/${module} before linting the Marketplace build`);
+}
+
 if (!/^0\.9\./.test(packageJson.version) && packageJson.version !== '1.0.0') failures.push(`Unexpected release version ${packageJson.version}`);
 if (!readme.includes('Marketplace edition')) failures.push('README must document the Marketplace/internal edition split.');
 

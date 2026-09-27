@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke, view } from '@forge/bridge';
+import { errorMessage } from '../../shared/licence.js';
 import './styles.css';
 
 function App() {
@@ -28,7 +29,7 @@ function App() {
         if (!key) throw new Error('This action needs a Jira issue.');
         await load(key);
       })
-      .catch((e) => setError(e?.message || 'Could not inspect this ticket.'))
+      .catch((e) => setError(errorMessage(e, 'Could not inspect this ticket.')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -51,7 +52,7 @@ function App() {
       setResult(response);
       await load(issueKey);
     } catch (e) {
-      setError(e?.message || 'Could not create device sub-tasks.');
+      setError(errorMessage(e, 'Could not create device sub-tasks.'));
     } finally {
       setBusy(false);
     }

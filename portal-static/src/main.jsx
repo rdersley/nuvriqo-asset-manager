@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke } from '@forge/bridge';
+import { errorMessage } from '../../shared/licence.js';
 import './styles.css';
 
 function App() {
@@ -14,7 +15,7 @@ function App() {
   useEffect(() => {
     invoke('getPortalAssets')
       .then((result) => setData(result || { assets: [], organisations: [] }))
-      .catch((e) => setError(e?.message || 'Could not load your organisation devices.'));
+      .catch((e) => setError(errorMessage(e, 'Could not load your organisation devices.')));
   }, []);
 
   const assets = data?.assets || [];
