@@ -1,8 +1,9 @@
 import Resolver from '@forge/resolver';
+import { licensedResolver } from './licence.js';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 
-const resolver = new Resolver();
+const resolver = licensedResolver(new Resolver());
 const ASSET_PREFIX = 'asset:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SPLIT_PREFIX = 'device-split:';

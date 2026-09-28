@@ -3,11 +3,12 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 import { guardResolver } from './auth.js';
+import { licensedResolver } from './licence.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
 const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets']);
-const resolver = guardResolver(new Resolver(), ADMIN_RESOLVERS);
+const resolver = guardResolver(licensedResolver(new Resolver()), ADMIN_RESOLVERS);
 const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
 // Jira-discovered and never confirmed by a person (edit, import or CSV merge).

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke, view } from '@forge/bridge';
+import { errorMessage } from '../../shared/licence.js';
 import './styles.css';
 
 function App() {
@@ -26,7 +27,7 @@ function App() {
         setIssueKey(key);
         if (key) await refresh(key);
       })
-      .catch((e) => setError(e?.message || 'Could not load asset information.'))
+      .catch((e) => setError(errorMessage(e, 'Could not load asset information.')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -54,7 +55,7 @@ function App() {
       setResults([]);
       setMessage(success);
     } catch (e) {
-      setError(e?.message || 'Could not update asset links.');
+      setError(errorMessage(e, 'Could not update asset links.'));
     } finally {
       setBusy(false);
     }

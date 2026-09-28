@@ -6,6 +6,7 @@ import './styles.css';
 import './reports.css';
 import { loadFullReport } from './reportData';
 import { downloadCsv } from '../../shared/csv.js';
+import { errorMessage } from '../../shared/licence.js';
 
 const normalise=(v)=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
 const formatDate=(v)=>v?new Date(v).toLocaleDateString():'—';
@@ -19,7 +20,7 @@ function Bars({title,rows}){const max=Math.max(...rows.map(r=>r.count),1);return
 
 function ReportsApp(){
   const [assets,setAssets]=useState([]),[faults,setFaults]=useState([]),[settings,setSettings]=useState(null),[orgMap,setOrgMap]=useState(new Map()),[loading,setLoading]=useState(true),[progress,setProgress]=useState(''),[partial,setPartial]=useState(false),[error,setError]=useState(''),[tab,setTab]=useState('inventory'),[query,setQuery]=useState('');
-  useEffect(()=>{(async()=>{try{const [full,cfg]=await Promise.all([loadFullReport(setProgress),invoke('getSettings')]);setAssets(full.assets);setFaults(full.reports);setPartial(full.partial);setSettings(cfg||{});setOrgMap(await loadOrganisationMap(cfg||{}));}catch(e){setError(e?.message||'Could not load reports.');}finally{setLoading(false);}})();},[]);
+  useEffect(()=>{(async()=>{try{const [full,cfg]=await Promise.all([loadFullReport(setProgress),invoke('getSettings')]);setAssets(full.assets);setFaults(full.reports);setPartial(full.partial);setSettings(cfg||{});setOrgMap(await loadOrganisationMap(cfg||{}));}catch(e){setError(errorMessage(e, 'Could not load reports.'));}finally{setLoading(false);}})();},[]);
   const faultById=useMemo(()=>new Map(faults.map(r=>[r.assetId,r])),[faults]);
   const rows=useMemo(()=>assets.map(a=>{const f=faultById.get(a.id)||{};const organisations=[...(orgMap.get(normalise(a.jiraIdentifier||a.name))||new Set())].sort();return{id:a.id,name:a.name||'',deviceId:a.jiraIdentifier||a.name||'',type:a.type||'',manufacturer:a.manufacturer||'',model:a.model||'',serialNumber:a.serialNumber||'',holder:a.assigneeName||a.crewCode||'',assignmentReference:a.crewCode||'',status:a.status||'',location:a.location||'',purchaseDate:a.purchaseDate||'',warrantyExpiry:a.warrantyExpiry||'',warrantyState:warrantyState(a),organisations,primaryFaults:f.total||0,openFaults:f.open||0,resolvedFaults:f.resolved||0,latestFaultDate:f.lastFault||'',latestFaultKey:f.latestFault?.key||'',qualityFlags:qualityFlags(a)};}),[assets,faultById,orgMap]);
   const filtered=useMemo(()=>{const q=query.trim().toLowerCase();return q?rows.filter(r=>[r.name,r.deviceId,r.type,r.manufacturer,r.model,r.serialNumber,r.holder,r.assignmentReference,r.status,r.location,...r.organisations,...r.qualityFlags].some(v=>String(v||'').toLowerCase().includes(q))):rows;},[rows,query]);

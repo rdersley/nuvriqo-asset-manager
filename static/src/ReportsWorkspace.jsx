@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from './invoke.js';
 import { downloadCsv } from '../../shared/csv.js';
+import { errorMessage } from '../../shared/licence.js';
 import { loadFullReport } from './reportData';
 
 const fmtDate=(v)=>v?new Date(v).toLocaleDateString():'—';
@@ -15,7 +16,7 @@ async function loadReportingData(onProgress){
 function GroupTable({title,rows=[]}){return <div className="card"><h2>{title}</h2><div className="table-wrap"><table><thead><tr><th>Name</th><th>Assets</th></tr></thead><tbody>{rows.length?rows.slice(0,20).map(r=><tr key={r.name}><td>{r.name}</td><td>{r.count}</td></tr>):<tr><td colSpan="2">No data available yet</td></tr>}</tbody></table></div></div>}
 export default function ReportsWorkspace({onBack}){
  const [data,setData]=useState(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[tab,setTab]=useState('inventory'),[query,setQuery]=useState(''),[progress,setProgress]=useState('');
- useEffect(()=>{loadReportingData(setProgress).then(setData).catch(e=>setError(e?.message||'Could not load reports.')).finally(()=>setLoading(false));},[]);
+ useEffect(()=>{loadReportingData(setProgress).then(setData).catch(e=>setError(errorMessage(e, 'Could not load reports.'))).finally(()=>setLoading(false));},[]);
  const rows=useMemo(()=>{const q=query.trim().toLowerCase();if(!data?.rows)return[];if(!q)return data.rows;return data.rows.filter(r=>[r.name,r.deviceId,r.type,r.manufacturer,r.model,r.serialNumber,r.holder,r.status,r.location,r.latestFaultDescription,r.latestFaultKey].some(v=>String(v||'').toLowerCase().includes(q)));},[data,query]);
  if(loading)return <main><div className="card">{progress||'Loading Asset Manager reports…'}</div></main>;
  if(error)return <main><div className="card report-warning">{error}</div></main>;
