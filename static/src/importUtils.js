@@ -37,26 +37,88 @@ function customFieldMap(customFields = []) {
   return map;
 }
 
-function rowsToAssets(rows, customFields = []) {
-  if (!Array.isArray(rows) || rows.length < 2) return [];
-  const headers = rows[0].map(normaliseHeader);
-  const customMap = customFieldMap(customFields);
+// Fields a file column can be mapped to, in the order the mapping step lists them.
+export const IMPORT_TARGETS = [
+  { key: 'name', label: 'Device Name' },
+  { key: 'jiraIdentifier', label: 'Device ID' },
+  { key: 'id', label: 'Asset ID' },
+  { key: 'serialNumber', label: 'Serial Number' },
+  { key: 'type', label: 'Type' },
+  { key: 'manufacturer', label: 'Manufacturer' },
+  { key: 'model', label: 'Model' },
+  { key: 'status', label: 'Status' },
+  { key: 'location', label: 'Location' },
+  { key: 'crewCode', label: 'Assignment Reference' },
+  { key: 'assigneeName', label: 'Assigned Person / Holder' },
+  { key: 'assigneeAccountId', label: 'Holder Jira Account ID' },
+  { key: 'purchaseDate', label: 'Purchase Date' },
+  { key: 'warrantyExpiry', label: 'Warranty Expiry' },
+  { key: 'notes', label: 'Notes' }
+];
 
-  return rows.slice(1)
-    .filter((row) => Array.isArray(row) && row.some((value) => cellValue(value)))
-    .map((row) => {
-      const asset = { customFields: {} };
-      headers.forEach((header, index) => {
-        if (!header) return;
-        const value = cellValue(row[index]);
-        const coreField = FIELD_MAP[header];
-        const customKey = customMap.get(header);
-        if (coreField) asset[coreField] = value;
-        else if (customKey) asset.customFields[customKey] = value;
-      });
-      if (!Object.keys(asset.customFields).length) delete asset.customFields;
-      return asset;
+// Targets for this site: the core fields plus configured custom fields ("custom:<key>").
+export function importTargets(customFields = []) {
+  return [...IMPORT_TARGETS, ...customFields.filter((f) => f?.key).map((f) => ({ key: `custom:${f.key}`, label: f.label || f.key }))];
+}
+
+// One target per column ('' = ignore). A heading remembered from an earlier import wins
+// over the built-in names; a target is never suggested for two columns.
+export function suggestMapping(headers = [], customFields = [], remembered = {}) {
+  const valid = new Set(importTargets(customFields).map((t) => t.key));
+  const customMap = customFieldMap(customFields);
+  const used = new Set();
+  return headers.map((raw) => {
+    const header = normaliseHeader(raw);
+    if (!header) return '';
+    const custom = customMap.get(header);
+    const options = [remembered[header], FIELD_MAP[header], custom ? `custom:${custom}` : ''];
+    const target = options.find((t) => t !== undefined && (t === '' || valid.has(t)));
+    if (!target || used.has(target)) return '';
+    used.add(target);
+    return target;
+  });
+}
+
+// Headings whose mapping differs from the built-in guess, to remember for next time.
+export function mappingToRemember(headers = [], mapping = [], customFields = []) {
+  const defaults = suggestMapping(headers, customFields);
+  const out = {};
+  headers.forEach((raw, i) => { const h = normaliseHeader(raw); if (h && (mapping[i] || '') !== defaults[i]) out[h] = mapping[i] || ''; });
+  return out;
+}
+
+export function duplicateTargets(mapping = []) {
+  const seen = new Set(); const dup = new Set();
+  for (const t of mapping) { if (!t) continue; if (seen.has(t)) dup.add(t); seen.add(t); }
+  return [...dup];
+}
+
+// Raw file contents: the heading row and the non-empty data rows.
+export async function readImportTable(file) {
+  const lower = file.name.toLowerCase();
+  let rows;
+  if (lower.endsWith('.csv')) rows = parseCsvRows((await file.text()).replace(/^﻿/, ''));
+  else if (lower.endsWith('.xlsx')) rows = await readSheet(file);
+  else throw new Error('Please choose a CSV or Excel .xlsx file.');
+  if (!Array.isArray(rows) || !rows.length) return { headers: [], rows: [] };
+  return {
+    headers: rows[0].map((h) => String(h ?? '').trim()),
+    rows: rows.slice(1).filter((row) => Array.isArray(row) && row.some((value) => cellValue(value)))
+  };
+}
+
+export function mapImportRows(table, mapping) {
+  return table.rows.map((row) => {
+    const asset = { customFields: {} };
+    mapping.forEach((target, index) => {
+      if (!target) return;
+      const value = cellValue(row[index]);
+      if (target.startsWith('custom:')) asset.customFields[target.slice(7)] = value;
+      else asset[target] = value;
     });
+    if (!Object.keys(asset.customFields).length) delete asset.customFields;
+    return asset;
+  });
 }
 
 function parseCsvRows(text) {
@@ -79,11 +141,9 @@ function parseCsvRows(text) {
   return rows;
 }
 
-export async function readAssetImportFile(file, customFields = []) {
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith('.csv')) return rowsToAssets(parseCsvRows((await file.text()).replace(/^﻿/, '')), customFields);
-  if (lower.endsWith('.xlsx')) return rowsToAssets(await readSheet(file), customFields);
-  throw new Error('Please choose a CSV or Excel .xlsx file.');
+export async function readAssetImportFile(file, customFields = [], remembered = {}) {
+  const table = await readImportTable(file);
+  return mapImportRows(table, suggestMapping(table.headers, customFields, remembered));
 }
 
 export function validateImportRows(rows, existingAssets = []) {
