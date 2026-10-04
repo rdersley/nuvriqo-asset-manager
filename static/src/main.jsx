@@ -41,12 +41,17 @@ function Settings({ initial, onSave, onScan, onClose }) {
   const fieldSelect = (label, key, help) => <label className="wide">{label}<select value={settings[key]?.id || ''} disabled={loadingFields||saving} onChange={(e) => { const field = jiraFields.find((item) => item.id === e.target.value); setSettings({ ...settings, [key]: field ? { id: field.id, name: field.name } : null }); }}><option value="">{loadingFields ? 'Loading Jira fields…' : 'Not mapped'}</option>{jiraFields.map((field) => <option key={field.id} value={field.id}>{field.name} ({field.id})</option>)}</select><small>{help}</small></label>;
   const [statusRules,setStatusRules]=useState((initial.statusRules||[]).map((r)=>({projects:(r.projects||[]).join(', '),ticketStatus:r.ticketStatus||'',deviceStatus:r.deviceStatus||''})));
   const [automationLog,setAutomationLog]=useState([]);
+  const initialReplacement=initial.replacement||{};
+  const [replacement,setReplacement]=useState({enabled:initialReplacement.enabled===true,projects:(initialReplacement.projects||[]).join(', '),ticketStatus:initialReplacement.ticketStatus||'',deviceStatus:initialReplacement.deviceStatus||'',pairs:(initialReplacement.pairs||[]).map((x)=>({existingId:x.existingField?.id||'',replacementId:x.replacementField?.id||''}))});
+  const fieldRef=(id)=>{const f=jiraFields.find((x)=>x.id===id);return id?{id,name:f?.name||id}:null;};
+  const updatePair=(i,patch)=>setReplacement({...replacement,pairs:replacement.pairs.map((x,j)=>j===i?{...x,...patch}:x)});
   useEffect(()=>{invoke('getStatusAutomationLog').then((rows)=>setAutomationLog(rows||[])).catch(()=>setAutomationLog([]));},[]);
   const deviceStatusOptions=statusesText.split('\n').map(x=>x.trim()).filter(Boolean);
   const updateRule=(i,patch)=>setStatusRules(statusRules.map((r,j)=>j===i?{...r,...patch}:r));
   const compileSettings=()=>({
     ...settings,
     statusRules:statusRules.filter(r=>r.ticketStatus.trim()&&r.deviceStatus),
+    replacement:{enabled:replacement.enabled,projects:replacement.projects,ticketStatus:replacement.ticketStatus,deviceStatus:replacement.deviceStatus,pairs:replacement.pairs.map((x)=>({existingField:fieldRef(x.existingId),replacementField:fieldRef(x.replacementId)})).filter((x)=>x.existingField&&x.replacementField)},
     assetTypes:assetTypesText.split('\n').map(x=>x.trim()).filter(Boolean),
     statuses:statusesText.split('\n').map(x=>x.trim()).filter(Boolean),
     locations:locationsText.split('\n').map(x=>x.trim()).filter(Boolean),
@@ -73,8 +78,27 @@ function Settings({ initial, onSave, onScan, onClose }) {
       </tbody></table></div>
       <div><button className="secondary" disabled={saving||statusRules.length>=30} onClick={()=>setStatusRules([...statusRules,{projects:'',ticketStatus:'',deviceStatus:''}])}>+ Add rule</button></div>
       {automationLog.length>0&&<details><summary>Recent automatic updates ({automationLog.length})</summary><div className="table-wrap"><table><thead><tr><th>When</th><th>Ticket</th><th>Moved to</th><th>Device</th><th>Result</th></tr></thead><tbody>
-        {automationLog.map((e,i)=><tr key={i}><td>{new Date(e.at).toLocaleString()}</td><td>{e.issueKey}</td><td>{e.ticketStatus}</td><td>{e.device||e.detail||'—'}</td><td>{({updated:'Updated','already-set':'Already set','no-device-on-ticket':'No device on ticket','multiple-devices':'More than one device','device-not-in-register':'Device not in register','jira-read-failed':'Could not read ticket'})[e.result]||e.result}{e.result==='updated'?` (${e.from||'—'} → ${e.deviceStatus})`:''}</td></tr>)}
+        {automationLog.map((e,i)=><tr key={i}><td>{new Date(e.at).toLocaleString()}</td><td>{e.issueKey}</td><td>{e.ticketStatus}</td><td>{e.device||e.detail||'—'}</td><td>{({updated:'Updated','already-set':'Already set','no-device-on-ticket':'No device on ticket','multiple-devices':'More than one device','device-not-in-register':'Device not in register','jira-read-failed':'Could not read ticket','replacement-applied':'Replacement applied','replacement-created':'Replacement created'})[e.result]||e.result}{e.result==='updated'?` (${e.from||'—'} → ${e.deviceStatus})`:''}</td></tr>)}
       </tbody></table></div></details>}
+    </div>
+    <div className="wide status-automation">
+      <h3>Device replacements</h3>
+      <small>Pair each "existing device" field with its "replacement" field (for example vPos Device ID - Existing → vPos Device ID - Replacement). Status rules above also find the device in the existing fields, so HW tickets work even when the main Device ID field is empty.</small>
+      <div className="table-wrap"><table><thead><tr><th>Existing device field</th><th>Replacement device field</th><th></th></tr></thead><tbody>
+        {replacement.pairs.map((x,i)=><tr key={i}>
+          <td><select value={x.existingId} disabled={saving||loadingFields} onChange={(e)=>updatePair(i,{existingId:e.target.value})}><option value="">Choose a field…</option>{jiraFields.map((f)=><option key={f.id} value={f.id}>{f.name}</option>)}</select></td>
+          <td><select value={x.replacementId} disabled={saving||loadingFields} onChange={(e)=>updatePair(i,{replacementId:e.target.value})}><option value="">Choose a field…</option>{jiraFields.map((f)=><option key={f.id} value={f.id}>{f.name}</option>)}</select></td>
+          <td><button className="secondary" disabled={saving} onClick={()=>setReplacement({...replacement,pairs:replacement.pairs.filter((_,j)=>j!==i)})}>Remove</button></td>
+        </tr>)}
+        {!replacement.pairs.length&&<tr><td colSpan="3" className="muted">No field pairs yet.</td></tr>}
+      </tbody></table></div>
+      <div><button className="secondary" disabled={saving||replacement.pairs.length>=6} onClick={()=>setReplacement({...replacement,pairs:[...replacement.pairs,{existingId:'',replacementId:''}]})}>+ Add field pair</button></div>
+      <label><span style={{display:'flex',alignItems:'center',gap:'8px'}}><input type="checkbox" checked={replacement.enabled} disabled={saving} onChange={(e)=>setReplacement({...replacement,enabled:e.target.checked})}/> Apply replacements automatically</span><small>When the ticket moves to the status below and a replacement field holds a Device ID, that device takes over the existing device's holder, client and location (or the ticket's Crew Code, Client and Location if the existing device isn't registered) and gets the status below. A replacement device that isn't in the register is created. The existing device is left as it is, apart from an activity note.</small></label>
+      <div className="form-grid">
+        <label>Projects<input value={replacement.projects} placeholder="HW (blank = any)" disabled={saving} onChange={(e)=>setReplacement({...replacement,projects:e.target.value})}/></label>
+        <label>When the ticket moves to<input value={replacement.ticketStatus} placeholder="e.g. Dispatched" disabled={saving} onChange={(e)=>setReplacement({...replacement,ticketStatus:e.target.value})}/></label>
+        <label>Set the replacement device status to<select value={replacement.deviceStatus} disabled={saving} onChange={(e)=>setReplacement({...replacement,deviceStatus:e.target.value})}><option value="">Choose…</option>{deviceStatusOptions.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+      </div>
     </div>
     <label className="wide">Assignment reference → holder mappings<textarea rows="5" placeholder={'EMP123 | | Jane Smith\nEXT999 | 712020:abcd... | John Smith'} value={crewMappingsText} onChange={(e)=>setCrewMappingsText(e.target.value)} /><small>One mapping per line: Assignment reference | optional Jira account ID | display name. A Jira account is not required. If a reference has no mapping, Asset Manager still records the reference as the holder.</small></label>
     <label>Asset types<textarea rows="8" value={assetTypesText} onChange={(e)=>setAssetTypesText(e.target.value)} /></label><label>Statuses<textarea rows="8" value={statusesText} onChange={(e)=>setStatusesText(e.target.value)} /></label><label>Locations<textarea rows="8" value={locationsText} onChange={(e)=>setLocationsText(e.target.value)} /></label><label>Custom fields<textarea rows="8" placeholder="assetOwner | Asset owner | text" value={customFieldsText} onChange={(e)=>setCustomFieldsText(e.target.value)} /></label>
