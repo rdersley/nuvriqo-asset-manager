@@ -134,7 +134,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
           <input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => chooseFile(e.target.files?.[0])} disabled={busy} />
         </label>
 
-        {table && table.headers.length > 0 && <details open={mappingChanged || !nameMapped} style={{ marginBottom: 12 }}>
+        {table && table.headers.length > 0 && <details open={mappingChanged || !nameMapped || mapping.some((t) => !t)} style={{ marginBottom: 12 }}>
           <summary style={{ cursor: 'pointer', fontWeight: 700, marginBottom: 8 }}>Column mapping ({mapping.filter(Boolean).length} of {table.headers.length} columns used)</summary>
           <div className="table-wrap"><table aria-label="Column mapping">
             <thead><tr><th>Column in file</th><th>Example values</th><th>Import into</th></tr></thead>

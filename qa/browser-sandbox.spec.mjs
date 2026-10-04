@@ -162,7 +162,8 @@ test.describe('Asset Manager sandbox browser acceptance', () => {
       buffer: Buffer.from(`Device Name,Device ID,Serial Number,Type,Client\n${unique},${unique},SER-${unique},Laptop,QA\n`),
     });
     await expect(frame.getByText(/1 ready to import/i)).toBeVisible({ timeout: 20_000 });
-    await expect(frame.getByRole('table', { name: 'Column mapping' })).toBeVisible();
+    // Every heading in this file is recognised (Client included), so the mapping starts collapsed.
+    await expect(frame.getByText('Column mapping (5 of 5 columns used)')).toBeVisible();
     const resultCell = frame.getByRole('table', { name: 'Import preview' }).locator('tbody tr').first().locator('td').last();
     await expect(resultCell).toContainText(/Create new|Update existing|Update by name|Merge by serial|Reconcile during import/i, { timeout: 20_000 });
     await assertAppHealthy(frame);
