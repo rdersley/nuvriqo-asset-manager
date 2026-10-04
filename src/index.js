@@ -8,7 +8,7 @@ import { licensedResolver } from './licence.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
-const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog']);
+const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict']);
 const resolver = guardResolver(licensedResolver(new Resolver()), ADMIN_RESOLVERS);
 const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
@@ -31,6 +31,8 @@ const LINK_PREFIX = 'issue-link:';
 const ASSET_TICKET_PREFIX = 'asset-ticket:';
 const HISTORY_PREFIX = 'asset-history:';
 const FAULT_HISTORY_PREFIX = 'fault-history:';
+// One record per device whose Jira tickets name a different holder than Asset Manager.
+const HOLDER_CONFLICT_PREFIX = 'holder-conflict:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SYNC_KEY = 'sync:asset-manager:jira-field';
 const SYNC_PROGRESS_KEY = 'sync-progress:asset-manager:jira-field';
@@ -80,7 +82,7 @@ async function saveOneAsset(supplied, source = 'manual', options = {}) {
   const asset = { ...normaliseAsset(supplied, existing || {}), ...(options.extra || {}) };
   if (source !== 'jira-sync' && !asset.curatedAt) asset.curatedAt = asset.updatedAt || now();
   if (source !== 'jira-sync') {
-    const fastImportSources=new Set(['bulk-import','import','import-reconcile']);
+    const fastImportSources=new Set(['bulk-import','import','import-reconcile','conflict-review']);
     if(fastImportSources.has(source)) await assertIndexedUniqueDeviceName(asset.name,asset.id);
     else await assertUniqueDeviceName(asset.name, asset.id);
   }
@@ -161,6 +163,7 @@ async function searchIssuesForIdentifiers(identifiers,known={}){
 }
 function issueMatchesIdentifier(issue, fieldId, identifier){const target=normaliseName(identifier);return validIdentifier(identifier)&&fieldValues(issue.fields?.[fieldId]).some(v=>normaliseName(v)===target);}
 function issueMatchesRelatedIdentifier(issue, fieldId, identifier){if(!fieldId||!validIdentifier(identifier))return false;const target=normaliseName(identifier);return relatedIdentifiers(issue.fields?.[fieldId]).some(v=>normaliseName(v)===target);}
+function latestIssueValueForIdentifier(issues,identifierFieldId,identifier,valueFieldId){if(!valueFieldId||!validIdentifier(identifier))return{value:'',issue:null};for(const issue of issues){if(!issueMatchesIdentifier(issue,identifierFieldId,identifier))continue;const value=fieldValues(issue.fields?.[valueFieldId])[0]||'';if(value)return{value,issue};}return{value:'',issue:null};}
 function latestFieldValueForIdentifier(issues, identifierFieldId, identifier, valueFieldId){if(!valueFieldId||!validIdentifier(identifier))return'';for(const issue of issues){if(!issueMatchesIdentifier(issue,identifierFieldId,identifier))continue;const value=fieldValues(issue.fields?.[valueFieldId])[0]||'';if(value)return value;}return'';}
 function mappedCrewPerson(settings,crewCode){const target=normaliseName(crewCode);return safeArray(settings.crewMappings).find(m=>normaliseName(m.crewCode)===target)||null;}
 function discoveredIdentifiersFromIssues(issues,fieldId){const discovered=new Map();let ignored=0;for(const issue of issues)for(const identifier of fieldValues(issue.fields?.[fieldId])){if(!validIdentifier(identifier)){ignored+=1;continue;}const normalized=normaliseName(identifier);if(!discovered.has(normalized))discovered.set(normalized,identifier);}return{identifiers:[...discovered.values()],ignored};}
@@ -179,17 +182,21 @@ async function syncAssetsFromJira({restart=false}={}){
   if(!field){const result={timestamp:now(),field:null,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);return result;}
   if(!progress||progress.fieldId!==field.id){progress={fieldId:field.id,projectKey:settings.jiraProjectKey||'',runId:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,nextPageToken:null,issuesScanned:0,discovered:0,created:0,matched:0,ignored:0,reconciled:0,startedAt:now()};if(page.nextPageToken===null&&issues.length===0){const result={timestamp:now(),field,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);return result;}}
   const{identifiers,ignored}=discoveredIdentifiersFromIssues(issues,field.id);
-  let batchCreated=0,batchMatched=0,batchDiscovered=0;
+  let batchCreated=0,batchMatched=0,batchDiscovered=0,batchConflicts=0;
   for(const identifier of identifiers){
     let asset=await findAssetForJiraIdentifier(field.id,identifier);
     const alreadyProcessed=asset?.jiraSyncRunId===progress.runId;
     if(!alreadyProcessed)batchDiscovered+=1;
-    const location=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraLocationField?.id);const type=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraTypeField?.id);const crewCode=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraCrewCodeField?.id);const crewPerson=crewCode?mappedCrewPerson(settings,crewCode):null;const holderName=crewCode?(crewPerson?.displayName||crewCode):'';const holderAccountId=crewPerson?.accountId||'';const base={jiraIdentifier:identifier,jiraIdentifierFieldId:field.id,jiraIdentifierFieldName:field.name,jiraSyncRunId:progress.runId};
-    if(asset){const locationUpdate=Boolean(location&&(!alreadyProcessed||!clean(asset.location)));const typeUpdate=Boolean(type&&(!alreadyProcessed||!clean(asset.type)||asset.type==='Other'));const crewUpdate=Boolean(crewCode&&(!alreadyProcessed||!clean(asset.crewCode)));if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}
+    const location=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraLocationField?.id);const type=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraTypeField?.id);const{value:crewCode,issue:crewIssue}=latestIssueValueForIdentifier(issues,field.id,identifier,settings.jiraCrewCodeField?.id);const crewPerson=crewCode?mappedCrewPerson(settings,crewCode):null;const holderName=crewCode?(crewPerson?.displayName||crewCode):'';const holderAccountId=crewPerson?.accountId||'';const base={jiraIdentifier:identifier,jiraIdentifierFieldId:field.id,jiraIdentifierFieldName:field.name,jiraSyncRunId:progress.runId};
+    if(asset){const locationUpdate=Boolean(location&&(!alreadyProcessed||!clean(asset.location)));const typeUpdate=Boolean(type&&(!alreadyProcessed||!clean(asset.type)||asset.type==='Other'));// A ticket only fills in a missing holder. When the device already has a different holder the
+    // ticket may be a handover, someone reporting for a colleague, or a mistyped Device ID, so it is
+    // recorded as a conflict for review instead of reassigning the device.
+    const holder=crewCode?compareHolder(asset,crewCode,holderName,holderAccountId):null;const crewUpdate=Boolean(holder&&(!holder.hasHolder||(holder.same&&!clean(asset.crewCode))));
+    if(holder?.hasHolder&&!alreadyProcessed){if(holder.same)await kvs.delete(HOLDER_CONFLICT_PREFIX+asset.id);else if(await recordHolderConflict(asset,crewIssue,{crewCode,holderName,holderAccountId}))batchConflicts+=1;}if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}
     await recordScannedTicketsForAsset(asset,issues,field,settings,progress.runId);
   }
-  progress={...progress,nextPageToken:page.nextPageToken,issuesScanned:progress.issuesScanned+issues.length,discovered:progress.discovered+batchDiscovered,created:progress.created+batchCreated,matched:progress.matched+batchMatched,ignored:progress.ignored+ignored};
-  const complete=!page.nextPageToken;const processed=progress.created+progress.matched;const result={timestamp:now(),field,issuesScanned:progress.issuesScanned,discovered:progress.discovered,processed,created:progress.created,matched:progress.matched,ignored:progress.ignored,reconciled:progress.reconciled,complete};if(complete){await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);}else await kvs.set(SYNC_PROGRESS_KEY,progress);return result;
+  progress={...progress,nextPageToken:page.nextPageToken,issuesScanned:progress.issuesScanned+issues.length,discovered:progress.discovered+batchDiscovered,created:progress.created+batchCreated,matched:progress.matched+batchMatched,ignored:progress.ignored+ignored,conflicts:(progress.conflicts||0)+batchConflicts};
+  const complete=!page.nextPageToken;const processed=progress.created+progress.matched;const result={timestamp:now(),field,issuesScanned:progress.issuesScanned,discovered:progress.discovered,processed,created:progress.created,matched:progress.matched,ignored:progress.ignored,reconciled:progress.reconciled,conflicts:progress.conflicts||0,complete};if(complete){await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);}else await kvs.set(SYNC_PROGRESS_KEY,progress);return result;
 }
 // Tickets for one device, including identifiers it had before a CSV merge
 // (jiraAliases). `truncated` means the result may be incomplete.
@@ -374,6 +381,53 @@ resolver.define('reconcileAssetImport',async({payload})=>{
   return{processed:rows.length,created,updated,merged,failed};
 });
 
+function holderOf(asset){return clean(asset?.assigneeName)||clean(asset?.crewCode)||'';}
+// hasHolder: the device already has someone recorded. same: the ticket names that same person.
+function compareHolder(asset,crewCode,holderName,holderAccountId){
+  const current=clean(asset?.crewCode);const hasHolder=Boolean(current||clean(asset?.assigneeName)||clean(asset?.assigneeAccountId));
+  const same=current?normaliseName(current)===normaliseName(crewCode):Boolean((holderAccountId&&asset.assigneeAccountId===holderAccountId)||(clean(asset?.assigneeName)&&normaliseName(asset.assigneeName)===normaliseName(holderName)));
+  return{hasHolder,same};
+}
+// Returns true when a new conflict was opened. A conflict someone chose to keep is not reopened by the
+// same ticket naming the same person; a different ticket or person opens it again.
+async function recordHolderConflict(asset,issue,ticket){
+  const key=HOLDER_CONFLICT_PREFIX+asset.id;const existing=await kvs.get(key);
+  const sameEvidence=existing&&existing.issueKey===(issue?.key||'')&&normaliseName(existing.ticketCrewCode)===normaliseName(ticket.crewCode);
+  if(sameEvidence&&(existing.status==='kept'||existing.status==='open'))return false;
+  await kvs.set(key,{assetId:asset.id,deviceName:asset.name||'',deviceId:asset.jiraIdentifier||asset.name||'',currentCrewCode:clean(asset.crewCode),currentHolder:holderOf(asset),ticketCrewCode:ticket.crewCode,ticketHolder:ticket.holderName||ticket.crewCode,ticketHolderAccountId:ticket.holderAccountId||'',issueKey:issue?.key||'',issueSummary:clean(issue?.fields?.summary||''),issueCreated:issue?.fields?.created||'',status:'open',detectedAt:now()});
+  return true;
+}
+resolver.define('getDataConflicts',async()=>{
+  const records=await queryAllByPrefix(HOLDER_CONFLICT_PREFIX,1000);const conflicts=[];let kept=0;
+  for(let i=0;i<records.length;i+=25){
+    const batch=records.slice(i,i+25);const assets=await Promise.all(batch.map(c=>kvs.get(ASSET_PREFIX+c.assetId)));
+    await Promise.all(batch.map(async(c,j)=>{
+      const asset=assets[j];
+      // Drop conflicts that no longer apply: the device was deleted or now has the ticket's holder.
+      if(!asset||compareHolder(asset,c.ticketCrewCode,c.ticketHolder,c.ticketHolderAccountId).same){await kvs.delete(HOLDER_CONFLICT_PREFIX+c.assetId);return;}
+      if(c.status==='kept'){kept+=1;return;}
+      conflicts.push({...c,deviceName:asset.name||c.deviceName,currentCrewCode:clean(asset.crewCode),currentHolder:holderOf(asset)});
+    }));
+  }
+  conflicts.sort((a,b)=>String(b.detectedAt).localeCompare(String(a.detectedAt)));
+  return{conflicts,kept,truncated:records.length>=1000};
+});
+resolver.define('resolveDataConflict',async({payload,context})=>{
+  const assetId=clean(payload?.assetId||'');const action=payload?.action;
+  if(!assetId||!['accept','keep'].includes(action))throw new Error('Choose a device and whether to use the ticket holder or keep the current one.');
+  const conflict=await kvs.get(HOLDER_CONFLICT_PREFIX+assetId);if(!conflict||conflict.status!=='open')throw new Error('This conflict has already been resolved. Refresh the list.');
+  const asset=await kvs.get(ASSET_PREFIX+assetId);if(!asset){await kvs.delete(HOLDER_CONFLICT_PREFIX+assetId);throw new Error('This device no longer exists.');}
+  const by=clean(context?.accountId||'');const ticket=conflict.issueKey||'a Jira ticket';
+  if(action==='accept'){
+    const saved=await saveOneAsset({...asset,crewCode:conflict.ticketCrewCode,assigneeName:conflict.ticketHolder,assigneeAccountId:conflict.ticketHolderAccountId||''},'conflict-review',{existing:asset});
+    await addHistory(assetId,{type:'holder-conflict-accepted',source:'conflict-review',issueKey:conflict.issueKey,resolvedBy:by,message:`Holder changed from ${holderOf(asset)||'unassigned'} to ${conflict.ticketHolder} after reviewing ${ticket}`});
+    await kvs.delete(HOLDER_CONFLICT_PREFIX+assetId);
+    return{ok:true,asset:saved};
+  }
+  await kvs.set(HOLDER_CONFLICT_PREFIX+assetId,{...conflict,status:'kept',resolvedAt:now(),resolvedBy:by});
+  await addHistory(assetId,{type:'holder-conflict-kept',source:'conflict-review',issueKey:conflict.issueKey,resolvedBy:by,message:`Kept holder ${holderOf(asset)||'unassigned'}; ${ticket} named ${conflict.ticketHolder}`});
+  return{ok:true};
+});
 resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`,1000);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
 resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const settings=await getSettingsValue();const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`,1000);return history.filter(item=>ticketMatchesConfiguredProject(item,settings)).sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});
 resolver.define('getSettings',async()=>getSettingsValue());
