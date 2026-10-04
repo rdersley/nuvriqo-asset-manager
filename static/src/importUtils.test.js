@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readAssetImportFile, validateImportRows } from './importUtils.js';
+import { duplicateTargets, mapImportRows, mappingToRemember, readAssetImportFile, readImportTable, suggestMapping, validateImportRows } from './importUtils.js';
 
 test('requires a Device Name', () => {
   const [row] = validateImportRows([{ name: '' }], []);
@@ -81,4 +81,37 @@ test('keeps Jira account identity optional when explicitly supplied', async () =
   const [row] = await readAssetImportFile(file);
   assert.equal(row.assigneeName, 'Portal Customer');
   assert.equal(row.assigneeAccountId, '712020:abcd');
+});
+
+const csv = (text) => ({ name: 'devices.csv', text: async () => text });
+
+test('unrecognised headings are left unmapped and listed with their columns', async () => {
+  const table = await readImportTable(csv('Hostname,Kit Type,Serial No.,Something Else\nTAB-1,Tablet,SN1,x\n'));
+  assert.deepEqual(table.headers, ['Hostname', 'Kit Type', 'Serial No.', 'Something Else']);
+  assert.deepEqual(suggestMapping(table.headers), ['', '', '', '']);
+});
+
+test('a chosen mapping imports columns whose headings do not match', async () => {
+  const table = await readImportTable(csv('Hostname,Kit Type,Serial No.,Owner Team\nTAB-1,Tablet,SN1,IT\n'));
+  const [row] = mapImportRows(table, ['name', 'type', 'serialNumber', 'custom:ownerTeam']);
+  assert.deepEqual(row, { name: 'TAB-1', type: 'Tablet', serialNumber: 'SN1', customFields: { ownerTeam: 'IT' } });
+});
+
+test('remembered headings win over built-in names, including "don\'t import"', () => {
+  const remembered = { hostname: 'name', location: '' };
+  assert.deepEqual(suggestMapping(['Hostname', 'Location', 'Base'], [], remembered), ['name', '', 'location']);
+});
+
+test('only changes from the built-in guess are remembered', () => {
+  const headers = ['Device Name', 'Hostname', 'Notes'];
+  assert.deepEqual(mappingToRemember(headers, ['name', 'jiraIdentifier', ''], []), { hostname: 'jiraIdentifier', notes: '' });
+});
+
+test('a field is never suggested for two columns, and duplicates are reported', () => {
+  assert.deepEqual(suggestMapping(['Device', 'Device Name']), ['name', '']);
+  assert.deepEqual(duplicateTargets(['name', 'type', 'name', '']), ['name']);
+});
+
+test('remembered mappings to fields that no longer exist are ignored', () => {
+  assert.deepEqual(suggestMapping(['Owner'], [], { owner: 'custom:gone' }), ['']);
 });
