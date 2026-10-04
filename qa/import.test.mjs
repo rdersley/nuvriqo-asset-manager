@@ -61,3 +61,16 @@ test('two new rows with the same Device Name never create two devices', async ()
   assert.equal(assets().length, 1);
   assert.equal(result.created + result.updated + result.merged, 2, 'the second row updates the device the first created');
 });
+
+test('the import preview classifies rows in parallel and keeps their order', async () => {
+  await reconcile([{ name: 'DEV-OLD', jiraIdentifier: 'DEV-OLD' }]);
+  const rows = Array.from({ length: 50 }, (_, i) => ({ name: i === 7 ? 'DEV-OLD' : `PREV${i}`, jiraIdentifier: i === 7 ? 'DEV-OLD' : `PREV${i}`, serialNumber: `PS${i}` }));
+  const started = Date.now();
+  const result = await main.previewAssetImportReconciliation({ payload: { assets: rows }, context: {} });
+  const elapsed = Date.now() - started;
+  assert.deepEqual(result.map((r) => r.index), rows.map((_, i) => i));
+  assert.equal(result[7].action, 'update-device-id');
+  assert.ok(result.every((r, i) => i === 7 || r.action === 'create'));
+  // One row after another: 50 rows x 3+ lookups x 5 ms = 750 ms or more.
+  assert.ok(elapsed < 300, `took ${elapsed} ms`);
+});

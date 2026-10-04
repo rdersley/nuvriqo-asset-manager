@@ -85,7 +85,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
       const previewLimit=Math.min(valid.length,200);
       const previewRows=valid.slice(0,previewLimit);
       const matches=[];
-      const previewBatchSize=20;
+      const previewBatchSize=50;
       for(let i=0;i<previewRows.length;i+=previewBatchSize){
         const batch=previewRows.slice(i,i+previewBatchSize).map(({_row,_error,...asset})=>asset);
         const result=await invoke('previewAssetImportReconciliation',{assets:batch});

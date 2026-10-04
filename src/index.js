@@ -315,9 +315,8 @@ async function reconciliationCandidateByIdentifier(fieldId,value){
 }
 async function classifyImportRow(row,settings){
   const fieldId=settings.jiraAssetField?.id||'';
-  const byName=await reconciliationCandidateByName(row?.name);
-  const byDevice=await reconciliationCandidateByIdentifier(fieldId,row?.jiraIdentifier);
-  const bySerial=await reconciliationCandidateByIdentifier(fieldId,row?.serialNumber);
+  // The three lookups are independent.
+  const [byName,byDevice,bySerial]=await Promise.all([reconciliationCandidateByName(row?.name),reconciliationCandidateByIdentifier(fieldId,row?.jiraIdentifier),reconciliationCandidateByIdentifier(fieldId,row?.serialNumber)]);
   const candidates=[byDevice,bySerial,byName].filter(Boolean);
   const unique=[...new Map(candidates.map(asset=>[asset.id,asset])).values()];
   if(unique.length>1){return{action:'review',message:'Multiple existing assets match this row. Review before importing.',candidateIds:unique.map(a=>a.id),existing:unique.map(a=>({id:a.id,name:a.name,jiraIdentifier:a.jiraIdentifier,serialNumber:a.serialNumber}))};}
@@ -327,15 +326,17 @@ async function classifyImportRow(row,settings){
   if(byDevice?.id===existing.id)return{action:'update-device-id',message:'Update existing asset “'+existing.name+'” by Device ID.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
   return{action:'update-name',message:'Update existing asset “'+existing.name+'” by device name.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
 }
+// Import rows processed in parallel per call (each row is several storage calls).
+const IMPORT_CONCURRENCY=8;
 resolver.define('previewAssetImportReconciliation',async({payload})=>{
   const rows=safeArray(payload?.assets).slice(0,500);
   const settings=await getSettingsValue();
-  const results=[];
-  for(let i=0;i<rows.length;i+=1){const match=await classifyImportRow(rows[i],settings);results.push({index:i,...match});}
+  // Read-only, so rows are classified in parallel; results keep the row order.
+  const results=new Array(rows.length);let next=0;
+  const worker=async()=>{while(next<rows.length){const i=next++;results[i]={index:i,...await classifyImportRow(rows[i],settings)};}};
+  await Promise.all(Array.from({length:Math.min(IMPORT_CONCURRENCY,rows.length)},worker));
   return results;
 });
-// Import rows processed in parallel per reconcileAssetImport call (each row is several storage calls).
-const IMPORT_CONCURRENCY=8;
 resolver.define('reconcileAssetImport',async({payload})=>{
   const rows=safeArray(payload?.assets).slice(0,100);
   const settings=await getSettingsValue();
