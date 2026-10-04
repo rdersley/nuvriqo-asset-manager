@@ -115,3 +115,10 @@ test('a field is never suggested for two columns, and duplicates are reported', 
 test('remembered mappings to fields that no longer exist are ignored', () => {
   assert.deepEqual(suggestMapping(['Owner'], [], { owner: 'custom:gone' }), ['']);
 });
+
+test('Client and Customer columns import into the device client', async () => {
+  const [a] = await readAssetImportFile(csv('Device Name,Client\nTAB-1,RYR\n'));
+  const [b] = await readAssetImportFile(csv('Device Name,Customer\nTAB-2,EZY\n'));
+  assert.equal(a.client, 'RYR');
+  assert.equal(b.client, 'EZY');
+});

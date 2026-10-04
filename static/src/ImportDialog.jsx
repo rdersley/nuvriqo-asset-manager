@@ -136,7 +136,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
 
         {table && table.headers.length > 0 && <details open={mappingChanged || !nameMapped} style={{ marginBottom: 12 }}>
           <summary style={{ cursor: 'pointer', fontWeight: 700, marginBottom: 8 }}>Column mapping ({mapping.filter(Boolean).length} of {table.headers.length} columns used)</summary>
-          <div className="table-wrap"><table>
+          <div className="table-wrap"><table aria-label="Column mapping">
             <thead><tr><th>Column in file</th><th>Example values</th><th>Import into</th></tr></thead>
             <tbody>{table.headers.map((header, i) => <tr key={i} style={{ cursor: 'default' }}>
               <td><strong>{header || `Column ${i + 1}`}</strong></td>
@@ -158,7 +158,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
         {error && <div className="notice">{error}</div>}
 
         {rows.length > 0 && !mappingChanged && <div className="table-wrap" style={{ marginTop: 12 }}>
-          <table>
+          <table aria-label="Import preview">
             <thead><tr><th>Row</th><th>Device Name</th><th>Device ID</th><th>Serial</th><th>Type</th><th>Assignment Reference</th><th>Holder</th><th>Result</th></tr></thead>
             <tbody>{rows.slice(0, 200).map((row) => <tr key={`${row._row}-${row.name}`}>
               <td>{row._row}</td><td><strong>{row.name || '—'}</strong></td><td>{row.jiraIdentifier || '—'}</td><td>{row.serialNumber || '—'}</td><td>{row.type || '—'}</td><td>{row.crewCode || '—'}</td><td>{row.assigneeName || '—'}</td>
