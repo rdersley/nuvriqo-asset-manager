@@ -16,6 +16,8 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
   const [table, setTable] = useState(null);
   const [mapping, setMapping] = useState([]);
   const [mappingChanged, setMappingChanged] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [outcome, setOutcome] = useState('');
   const targets = importTargets(customFields);
   const duplicates = duplicateTargets(mapping);
   const nameMapped = mapping.includes('name');
@@ -34,6 +36,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
     if (!file) return;
     setBusy(true);
     setError('');
+    setOutcome('');
     try {
       const read = await readImportTable(file);
       const suggested = suggestMapping(read.headers, customFields, loadRemembered());
@@ -57,6 +60,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
   async function recheck() {
     setBusy(true);
     setError('');
+    setOutcome('');
     try {
       const remembered = loadRemembered();
       saveRemembered({ ...remembered, ...mappingToRemember(table.headers, mapping, customFields) });
@@ -109,14 +113,35 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
 
   async function runImport() {
     if (!validRows.length || mappingChanged) return;
+    const total = validRows.length;
     setBusy(true);
     setError('');
+    setOutcome('');
+    setProgress(`Importing 0 / ${total}…`);
     try {
-      await onImport(validRows.map(({ _row, _error, ...asset }) => asset));
-      onClose();
+      const result = await onImport(validRows.map(({ _row, _error, _reconcile, ...asset }) => asset), (done) => setProgress(`Importing ${done} / ${total}…`));
+      const failed = result?.failed || [];
+      const done = result?.done ?? total;
+      if (!failed.length && !result?.error) { onClose(); return; }
+      // Drop the rows that were imported so pressing Import again cannot repeat them. Rows that
+      // failed stay listed with their reason; rows not reached yet stay ready to import.
+      const reasons = new Map(failed.map((f) => [f.index, f.error || 'Could not be imported.']));
+      let index = 0;
+      setRows(rows.flatMap((row) => {
+        if (row._error) return [row];
+        const i = index++;
+        if (reasons.has(i)) return [{ ...row, _error: reasons.get(i), _reconcile: null }];
+        return i >= done ? [row] : [];
+      }));
+      const imported = (result.created || 0) + (result.updated || 0) + (result.merged || 0);
+      const parts = [`${imported} imported (${result.created || 0} created, ${result.updated || 0} updated, ${result.merged || 0} merged)`];
+      if (failed.length) parts.push(`${failed.length} could not be imported; the reason is shown in the Result column`);
+      if (result.error) parts.push(`the import stopped after ${done} of ${total} rows (${result.error}). Press Import to continue with the remaining ${total - done}`);
+      setOutcome(`${parts.join('; ')}.`);
     } catch (e) {
-      setError(e?.message || 'Import failed.');
+      setOutcome(e?.message || 'Import failed.');
     } finally {
+      setProgress('');
       setBusy(false);
     }
   }
@@ -154,7 +179,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
           </div>}
         </details>}
 
-        {fileName && !mappingChanged && <div className="notice">{fileName}: {validRows.length} ready to import{invalidRows.length ? `, ${invalidRows.length} need attention` : ''}.{validRows.length>200?' Large-file mode: the first 200 valid rows are previewed now; remaining rows are reconciled in safe batches during import.':''}</div>}
+        {fileName && !mappingChanged && !outcome && <div className="notice">{fileName}: {validRows.length} ready to import{invalidRows.length ? `, ${invalidRows.length} need attention` : ''}.{validRows.length>200?' Large-file mode: the first 200 valid rows are previewed now; remaining rows are reconciled in safe batches during import.':''}</div>}
         {error && <div className="notice">{error}</div>}
 
         {rows.length > 0 && !mappingChanged && <div className="table-wrap" style={{ marginTop: 12 }}>
@@ -168,9 +193,10 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
           {rows.length > 200 && <p>Showing the first 200 of {rows.length} rows.</p>}
         </div>}
 
+        {(progress || outcome) && <div className="notice" role="status" style={{ marginTop: 12 }}>{progress || outcome}</div>}
         <div className="actions">
-          <button className="secondary" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="primary" onClick={runImport} disabled={busy || mappingChanged || !validRows.length}>{busy ? 'Working…' : `Import ${validRows.length || ''} asset${validRows.length === 1 ? '' : 's'}`}</button>
+          <button className="secondary" onClick={onClose} disabled={busy}>{outcome ? 'Close' : 'Cancel'}</button>
+          <button className="primary" onClick={runImport} disabled={busy || mappingChanged || !validRows.length}>{progress || (busy ? 'Working…' : `Import ${validRows.length || ''} asset${validRows.length === 1 ? '' : 's'}`)}</button>
         </div>
       </div>
     </div>
