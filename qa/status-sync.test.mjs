@@ -106,3 +106,76 @@ test('saving configuration keeps the rules and the on/off switch', async () => {
   assert.equal(saved.statusAutomationEnabled, true);
   assert.deepEqual(saved.statusRules, [{ projects: ['SD', 'HW'], ticketStatus: 'Dispatched', deviceStatus: 'In Use' }]);
 });
+
+// HW-51409: vPos Device ID - Existing RYRS408034, Replacement RYRS506641, Crew MORGPI, RYR, PFO.
+const HW = {
+  ...SETTINGS,
+  jiraCrewCodeField: { id: 'customfield_300' }, jiraClientField: { id: 'customfield_301' }, jiraLocationField: { id: 'customfield_302' }, jiraTypeField: { id: 'customfield_303' },
+  crewMappings: [{ crewCode: 'MORGPI', accountId: '', displayName: 'Pia Morgan' }],
+  statusRules: [{ projects: ['HW'], ticketStatus: 'Waiting Device Return', deviceStatus: 'Repair' }],
+  replacement: { enabled: true, projects: ['HW'], ticketStatus: 'Dispatched', deviceStatus: 'In Use', pairs: [{ existingField: { id: 'customfield_201', name: 'vPos Device ID - Existing' }, replacementField: { id: 'customfield_202', name: 'vPos Device ID - Replacement' } }] }
+};
+const hwFields = (extra = {}) => ({ project: { key: 'HW' }, customfield_100: null, customfield_201: 'RYRS408034', customfield_202: 'RYRS506641', customfield_300: 'MORGPI', customfield_301: { value: 'RYR - Ryanair' }, customfield_302: { value: 'PFO' }, customfield_303: { value: 'Samsung A03' }, ...extra });
+
+test('HW status rules find the device in the "existing" field when Device ID is empty', async () => {
+  store.set('settings:asset-manager', structuredClone(HW));
+  const oldId = device('RYRS408034', 'In Use');
+  issueFields = hwFields();
+  await handler(statusEvent('HW-51409', 'Waiting Device Return'));
+  assert.equal(store.get(`asset:${oldId}`).status, 'Repair');
+});
+
+test('a replacement takes over the old device holder, client and location', async () => {
+  store.set('settings:asset-manager', structuredClone(HW));
+  const oldId = device('RYRS408034', 'Repair');
+  // The old device's details differ from the ticket's, and win.
+  store.set(`asset:${oldId}`, { ...store.get(`asset:${oldId}`), crewCode: 'HOLDER', assigneeName: 'Old Holder', client: 'RYS - Malta Air', location: 'STN' });
+  const newId = device('RYRS506641', 'Available');
+  issueFields = hwFields();
+  const result = await handler(statusEvent('HW-51409', 'Dispatched'));
+  const replacement = store.get(`asset:${newId}`);
+  assert.deepEqual([replacement.status, replacement.crewCode, replacement.assigneeName, replacement.client, replacement.location], ['In Use', 'HOLDER', 'Old Holder', 'RYS - Malta Air', 'STN']);
+  assert.match(history(newId).at(-1).message, /replacement for RYRS408034 on HW-51409/);
+  assert.equal(store.get(`asset:${oldId}`).status, 'Repair', 'the old device is left alone');
+  assert.match(history(oldId).at(-1).message, /Replaced by RYRS506641 on HW-51409/);
+  assert.deepEqual(result.replacements, [{ replaced: 'RYRS408034', by: newId, created: false }]);
+});
+
+test('an unregistered replacement device is created with the discovery id scheme', async () => {
+  store.set('settings:asset-manager', structuredClone(HW));
+  const oldId = device('RYRS408034', 'Repair');
+  store.set(`asset:${oldId}`, { ...store.get(`asset:${oldId}`), type: 'vPOS Device Set', crewCode: 'MORGPI', assigneeName: 'Pia Morgan', client: 'RYR - Ryanair', location: 'PFO' });
+  issueFields = hwFields();
+  await handler(statusEvent('HW-51409', 'Dispatched'));
+  const newId = jiraAssetId('customfield_100', 'RYRS506641');
+  const created = store.get(`asset:${newId}`);
+  assert.equal(created.name, 'RYRS506641');
+  assert.equal(created.type, 'vPOS Device Set');
+  assert.equal(created.status, 'In Use');
+  assert.equal(created.crewCode, 'MORGPI');
+  assert.equal(store.get(`asset-name:${Buffer.from('ryrs506641').toString('base64url')}`).assetId, newId);
+  assert.equal(log()[0].result, 'replacement-created');
+});
+
+test('without a registered old device the ticket fields supply holder, client, location and type', async () => {
+  store.set('settings:asset-manager', structuredClone(HW));
+  issueFields = hwFields();
+  await handler(statusEvent('HW-51409', 'Dispatched'));
+  const created = store.get(`asset:${jiraAssetId('customfield_100', 'RYRS506641')}`);
+  assert.deepEqual([created.crewCode, created.assigneeName, created.client, created.location, created.type], ['MORGPI', 'Pia Morgan', 'RYR - Ryanair', 'PFO', 'Samsung A03']);
+});
+
+test('replacements do nothing when switched off or at other statuses', async () => {
+  store.set('settings:asset-manager', { ...structuredClone(HW), replacement: { ...HW.replacement, enabled: false }, statusAutomationEnabled: false });
+  issueFields = hwFields();
+  assert.equal((await handler(statusEvent('HW-1', 'Dispatched'))).skipped, 'automation-off');
+  store.set('settings:asset-manager', structuredClone(HW));
+  await handler(statusEvent('HW-1', 'Delivered'));
+  assert.equal(store.get(`asset:${jiraAssetId('customfield_100', 'RYRS506641')}`), undefined);
+});
+
+test('saving configuration keeps valid replacement pairs only', async () => {
+  await main.saveSettings({ payload: { settings: { ...SETTINGS, replacement: { enabled: true, projects: 'hw', ticketStatus: 'Dispatched', deviceStatus: 'in use', pairs: [HW.replacement.pairs[0], { existingField: { id: 'summary' }, replacementField: { id: 'customfield_9' } }] } } }, context: {} });
+  const saved = store.get('settings:asset-manager').replacement;
+  assert.deepEqual(saved, { enabled: true, projects: ['HW'], ticketStatus: 'Dispatched', deviceStatus: 'In Use', pairs: [HW.replacement.pairs[0]] });
+});

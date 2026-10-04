@@ -35,3 +35,39 @@ export function matchStatusRule(rules, projectKey, ticketStatus) {
   const project = clean(projectKey).toUpperCase();
   return asList(rules).find((r) => statusKey(r.ticketStatus) === statusKey(ticketStatus) && (!r.projects?.length || r.projects.includes(project))) || null;
 }
+
+// Device replacements: HW tickets record the device being replaced and its replacement in a pair
+// of fields per device type (e.g. "vPos Device ID - Existing" / "vPos Device ID - Replacement").
+// When the ticket moves to the configured status, the replacement device takes over the old
+// device's holder, client and location and gets the configured status.
+export const MAX_REPLACEMENT_PAIRS = 6;
+const CUSTOM_FIELD = /^customfield_\d+$/;
+const fieldRef = (f) => (CUSTOM_FIELD.test(clean(f?.id)) ? { id: clean(f.id), name: clean(f?.name) || clean(f.id) } : null);
+
+export function normaliseReplacementSettings(input, deviceStatuses = []) {
+  const byKey = new Map(asList(deviceStatuses).map((s) => [statusKey(s), clean(s)]));
+  const projects = (Array.isArray(input?.projects) ? input.projects : String(input?.projects || '').split(','))
+    .map((p) => clean(p).toUpperCase()).filter((p) => PROJECT_KEY.test(p));
+  const pairs = asList(input?.pairs).map((p) => ({ existingField: fieldRef(p?.existingField), replacementField: fieldRef(p?.replacementField) }))
+    .filter((p) => p.existingField && p.replacementField && p.existingField.id !== p.replacementField.id).slice(0, MAX_REPLACEMENT_PAIRS);
+  return {
+    enabled: input?.enabled === true,
+    projects: [...new Set(projects)],
+    ticketStatus: clean(input?.ticketStatus).slice(0, 100),
+    deviceStatus: byKey.get(statusKey(input?.deviceStatus)) || '',
+    pairs
+  };
+}
+
+export function replacementApplies(replacement, projectKey, ticketStatus) {
+  if (!replacement?.enabled || !replacement.ticketStatus || !replacement.deviceStatus || !replacement.pairs?.length) return false;
+  const project = clean(projectKey).toUpperCase();
+  return statusKey(replacement.ticketStatus) === statusKey(ticketStatus) && (!replacement.projects.length || replacement.projects.includes(project));
+}
+
+// Fields that identify "the device on this ticket" for status rules: the main Device ID field
+// plus the "existing device" field of every replacement pair (HW tickets use those).
+export function deviceFieldIds(settings = {}) {
+  const ids = [clean(settings.jiraAssetField?.id), ...asList(settings.replacement?.pairs).map((p) => clean(p?.existingField?.id))];
+  return [...new Set(ids.filter(Boolean))];
+}
