@@ -72,10 +72,12 @@ async function recordFaultHistory(asset,ticket,knownKeys){const fault=clean(tick
 async function queryAllByPrefix(prefix,limit=500) { const values = []; let cursor; const cap=Math.max(1,Math.min(Number(limit)||500,1000)); do { let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(Math.min(100,cap-values.length)); if (cursor) query = query.cursor(cursor); const page = await query.getMany(); values.push(...page.results.map((e) => e.value)); cursor = page.nextCursor; } while (cursor&&values.length<cap); return values.slice(0,cap); }
 async function assertUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); const assets = await queryAllByPrefix(ASSET_PREFIX); const duplicate = assets.find((a) => a.id !== assetId && normaliseName(a.name) === normalized); if (duplicate) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
 async function assertIndexedUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
-async function saveOneAsset(supplied, source = 'manual') {
+// options.existing: the stored record when the caller has just read it (saves a read).
+// options.extra: fields normaliseAsset does not carry (e.g. jiraAliases), written in the same set.
+async function saveOneAsset(supplied, source = 'manual', options = {}) {
   if (!clean(supplied?.name)) throw new Error('Device name is required.');
-  const existing = supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
-  const asset = normaliseAsset(supplied, existing || {});
+  const existing = options.existing !== undefined ? options.existing : supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
+  const asset = { ...normaliseAsset(supplied, existing || {}), ...(options.extra || {}) };
   if (source !== 'jira-sync' && !asset.curatedAt) asset.curatedAt = asset.updatedAt || now();
   if (source !== 'jira-sync') {
     const fastImportSources=new Set(['bulk-import','import','import-reconcile']);
@@ -84,10 +86,13 @@ async function saveOneAsset(supplied, source = 'manual') {
   }
   const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
   const newNameKey = nameIndexKey(asset.name);
-  await kvs.set(`${ASSET_PREFIX}${asset.id}`, asset);
-  if (clean(asset.client)) await kvs.set(`${CLIENT_INDEX_PREFIX}${Buffer.from(normaliseName(asset.client), 'utf8').toString('base64url')}`, { client: clean(asset.client) });
-  await kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt });
-  if (oldNameKey && oldNameKey !== newNameKey) await kvs.delete(oldNameKey);
+  // Independent writes go together rather than one after another.
+  await Promise.all([
+    kvs.set(`${ASSET_PREFIX}${asset.id}`, asset),
+    clean(asset.client) ? kvs.set(`${CLIENT_INDEX_PREFIX}${Buffer.from(normaliseName(asset.client), 'utf8').toString('base64url')}`, { client: clean(asset.client) }) : null,
+    kvs.set(newNameKey, { assetId: asset.id, name: asset.name, updatedAt: asset.updatedAt }),
+    oldNameKey && oldNameKey !== newNameKey ? kvs.delete(oldNameKey) : null
+  ]);
   if (!existing) await addHistory(asset.id, { type: 'created', source, message: source === 'jira-sync' ? 'Asset discovered from Jira' : 'Asset created' });
   else {
     const changes=[];
@@ -329,32 +334,42 @@ resolver.define('previewAssetImportReconciliation',async({payload})=>{
   for(let i=0;i<rows.length;i+=1){const match=await classifyImportRow(rows[i],settings);results.push({index:i,...match});}
   return results;
 });
+// Import rows processed in parallel per reconcileAssetImport call (each row is several storage calls).
+const IMPORT_CONCURRENCY=8;
 resolver.define('reconcileAssetImport',async({payload})=>{
   const rows=safeArray(payload?.assets).slice(0,100);
   const settings=await getSettingsValue();
   let created=0,updated=0,merged=0;const failed=[];
-  for(let i=0;i<rows.length;i+=1){
-    const row=rows[i]||{};
-    try{
-      if(!clean(row.name))throw new Error('Device Name is required.');
-      const match=await classifyImportRow(row,settings);
-      if(match.action==='review')throw new Error(match.message);
-      let existing=match.existing?.id?await kvs.get(ASSET_PREFIX+match.existing.id):null;
-      if(!existing){await saveOneAsset(row,'import');created+=1;continue;}
+  // Rows run IMPORT_CONCURRENCY at a time. Rows that resolve to the same existing device, or create the
+  // same Device Name, share a lock so they are applied one after another.
+  const locks=new Map();
+  // fn receives true when an earlier row in this batch shares the key.
+  const withLock=(key,fn)=>{const prev=locks.get(key);const go=()=>fn(Boolean(prev));const run=(prev||Promise.resolve()).then(go,go);locks.set(key,run.catch(()=>{}));return run;};
+  const importRow=async(row)=>{
+    if(!clean(row.name))throw new Error('Device Name is required.');
+    const match=await classifyImportRow(row,settings);
+    if(match.action==='review')throw new Error(match.message);
+    const lockKey=match.existing?.id?`asset:${match.existing.id}`:`name:${normaliseName(row.name)}`;
+    return withLock(lockKey,async(shared)=>{
+      // A row that looked new may have been created by an earlier row in this batch; check again.
+      if(shared&&!match.existing?.id){const again=await classifyImportRow(row,settings);if(again.action==='review')throw new Error(again.message);Object.assign(match,again);}
+      const existing=match.existing?.id?await kvs.get(ASSET_PREFIX+match.existing.id):null;
+      if(!existing){await saveOneAsset(row,'import',{existing:null});return 'created';}
       const oldName=existing.name||'';const oldIdentifier=existing.jiraIdentifier||existing.name||'';
       const aliases=[...new Set([...safeArray(existing.jiraAliases),oldIdentifier].map(reconciliationValue).filter(Boolean).filter(v=>normaliseName(v)!==normaliseName(row.jiraIdentifier||row.name||'')))];
-      const saved=await saveOneAsset({...row,id:existing.id},'import-reconcile');
-      const reconciled={...saved,jiraAliases:aliases,notes:clean(row.notes)||saved.notes||''};
-      await kvs.set(ASSET_PREFIX+saved.id,reconciled);
+      const saved=await saveOneAsset({...row,id:existing.id},'import-reconcile',{existing,extra:{jiraAliases:aliases,notes:clean(row.notes)||existing.notes||''}});
       if(match.action==='merge-serial'){
-        merged+=1;
         await addHistory(saved.id,{type:'merged',source:'import-reconcile',message:'Merged Jira-discovered record '+(oldIdentifier||oldName)+' into '+saved.name+' during CSV reconciliation',fromDevice:oldName,fromIdentifier:oldIdentifier,matchedBy:'serial-number'});
-      }else{
-        updated+=1;
-        await addHistory(saved.id,{type:'import-update',source:'import-reconcile',message:'Updated '+saved.name+' from CSV import',matchedBy:match.action==='update-device-id'?'device-id':'device-name'});
+        return 'merged';
       }
-    }catch(error){failed.push({index:i,name:row?.name||'',error:error?.message||'Import reconciliation failed.'});}
-  }
+      await addHistory(saved.id,{type:'import-update',source:'import-reconcile',message:'Updated '+saved.name+' from CSV import',matchedBy:match.action==='update-device-id'?'device-id':'device-name'});
+      return 'updated';
+    });
+  };
+  let next=0;
+  const worker=async()=>{while(next<rows.length){const i=next++;const row=rows[i]||{};try{const outcome=await importRow(row);if(outcome==='created')created+=1;else if(outcome==='merged')merged+=1;else updated+=1;}catch(error){failed.push({index:i,name:row?.name||'',error:error?.message||'Import reconciliation failed.'});}}};
+  await Promise.all(Array.from({length:Math.min(IMPORT_CONCURRENCY,rows.length)},worker));
+  failed.sort((a,b)=>a.index-b.index);
   return{processed:rows.length,created,updated,merged,failed};
 });
 
