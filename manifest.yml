@@ -83,6 +83,14 @@ modules:
         - customer
         - unlicensed
 
+  trigger:
+    - key: ticket-status-device-sync
+      function: status-sync
+      events:
+        - avi:jira:updated:issue
+      filter:
+        ignoreSelf: true
+
   scheduledTrigger:
     - key: portal-plus-snapshot
       function: portal-plus-refresh
@@ -103,6 +111,8 @@ modules:
       handler: crew.handler
     - key: portal-plus-refresh
       handler: portal-plus-refresh.handler
+    - key: status-sync
+      handler: status-sync.handler
 
 resources:
   - key: main
