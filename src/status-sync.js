@@ -72,6 +72,12 @@ async function applyStatusRule(settings, fields, issueKey, change, rule) {
   return { updated: device.id };
 }
 
+// The Asset types list's spelling of a type from a ticket, so "tablet" is saved as "Tablet".
+function configuredType(settings, type) {
+  const key = normaliseName(type);
+  return (settings.assetTypes || []).find((t) => normaliseName(t) === key) || type;
+}
+
 // Holder, client and location for the replacement: from the old device when it is registered,
 // otherwise from the ticket's mapped fields.
 function takeOver(settings, fields, oldDevice) {
@@ -97,7 +103,7 @@ async function applyReplacement(settings, fields, issueKey, change, replacement)
     if (created) {
       // Same id scheme as Jira discovery, so a later scan matches this record.
       const id = mainFieldId ? jiraAssetId(mainFieldId, newId) : `AST-REPL-${createHash('sha256').update(normaliseName(newId)).digest('hex').slice(0, 24).toUpperCase()}`;
-      device = { id, name: newId, jiraIdentifier: newId, type: oldDevice?.type || firstValue(fields[settings.jiraTypeField?.id]) || 'Other', notes: `Created from ${issueKey} as the replacement for ${existingIds[0] || 'an unrecorded device'}.`, createdAt: now(), curatedAt: now() };
+      device = { id, name: newId, jiraIdentifier: newId, type: oldDevice?.type || configuredType(settings, firstValue(fields[settings.jiraTypeField?.id])) || 'Other', notes: `Created from ${issueKey} as the replacement for ${existingIds[0] || 'an unrecorded device'}.`, createdAt: now(), curatedAt: now() };
       await kvs.set(nameIndexKey(newId), { assetId: id, name: newId, updatedAt: now() });
     }
     const values = { ...takeOver(settings, fields, oldDevice), status: replacement.deviceStatus };

@@ -4,7 +4,8 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 
-const resolver = licensedResolver(new Resolver());
+import { trackActor, actorFields } from './actor.js';
+const resolver = trackActor(licensedResolver(new Resolver()));
 const ASSET_NAME_PREFIX = 'asset-name:';
 // Bounded fallback for assets the indexes cannot find (see resolveIdentifiers).
 const ASSET_SCAN_PAGES = 20;
@@ -74,7 +75,7 @@ async function updateIssueFields(issueKey, fields) {
 
 async function addHistory(assetId, event) {
   const timestamp = now();
-  await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event });
+  await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...actorFields(), ...event });
 }
 
 // Keys must match src/index.js (makeJiraAssetId, nameIndexKey).

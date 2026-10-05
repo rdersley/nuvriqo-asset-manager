@@ -4,7 +4,8 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 
-const resolver = licensedResolver(new Resolver());
+import { trackActor, actorFields } from './actor.js';
+const resolver = trackActor(licensedResolver(new Resolver()));
 const ASSET_PREFIX = 'asset:';
 const ASSET_NAME_PREFIX = 'asset-name:';
 const SETTINGS_KEY = 'settings:asset-manager';
@@ -64,7 +65,7 @@ async function updateIssue(issueKey, asset, choices = {}) {
   const response = await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}`, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
   if (!response.ok) { let detail=''; try{detail=JSON.stringify(await response.json());}catch{} throw new Error(`Could not update Jira ticket fields (${response.status}).${detail ? ` ${detail.slice(0,300)}` : ''}`); }
   const timestamp = now();
-  await kvs.set(`${HISTORY_PREFIX}${asset.id}:${timestamp}:ticket-sync`, { assetId:asset.id,timestamp,type:'ticket-field-sync',source:'jira',issueKey,message:`${issueKey} updated from Asset Manager`,fields:updated });
+  await kvs.set(`${HISTORY_PREFIX}${asset.id}:${timestamp}:ticket-sync`, { assetId:asset.id,timestamp,...actorFields(),type:'ticket-field-sync',source:'jira',issueKey,message:`${issueKey} updated from Asset Manager`,fields:updated });
   return { updated, skipped:false };
 }
 

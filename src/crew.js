@@ -2,10 +2,11 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { guardResolver } from './auth.js';
+import { trackActor, actorFields } from './actor.js';
 
 // Internal Asset Operations handles crew personal data (emails, usernames,
 // contract dates) and rewrites asset holders, so every action is admin-only.
-const resolver = guardResolver(new Resolver(), 'all');
+const resolver = trackActor(guardResolver(new Resolver(), 'all'));
 const SETTINGS_KEY = 'settings:asset-manager';
 const CREW_PREFIX = 'internal-crew:';
 const CREW_ALIAS_PREFIX = 'internal-crew-alias:';
@@ -42,7 +43,7 @@ const values = async (prefix, limit = 500) => (await entries(prefix, limit)).map
 
 async function addHistory(assetId, event) {
   const timestamp = now();
-  await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2,8)}`, { assetId, timestamp, ...event });
+  await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2,8)}`, { assetId, timestamp, ...actorFields(), ...event });
 }
 function fieldValues(v) {
   if (v == null) return [];

@@ -3,7 +3,8 @@ import { licensedResolver } from './licence.js';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 
-const resolver = licensedResolver(new Resolver());
+import { trackActor, actorFields } from './actor.js';
+const resolver = trackActor(licensedResolver(new Resolver()));
 const ASSET_PREFIX = 'asset:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SPLIT_PREFIX = 'device-split:';
@@ -208,7 +209,7 @@ async function inheritedCreateFields(issueKey, projectId, issueTypeId) {
 async function addHistory(assetId, event) {
   if (!assetId) return;
   const timestamp = now();
-  await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event });
+  await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...actorFields(), ...event });
 }
 
 function childDescription(parentKey, identifier, fault) {

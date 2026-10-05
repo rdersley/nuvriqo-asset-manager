@@ -5,11 +5,12 @@ import { createHash } from 'node:crypto';
 import { guardResolver } from './auth.js';
 import { normaliseReplacementSettings, normaliseStatusRules, STATUS_AUTOMATION_LOG_KEY } from './status-automation.js';
 import { licensedResolver } from './licence.js';
+import { trackActor, actorFields } from './actor.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
-const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict']);
-const resolver = guardResolver(licensedResolver(new Resolver()), ADMIN_RESOLVERS);
+const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict', 'tidyAssetTypes']);
+const resolver = trackActor(guardResolver(licensedResolver(new Resolver()), ADMIN_RESOLVERS));
 const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
 // Jira-discovered and never confirmed by a person (edit, import or CSV merge).
@@ -68,12 +69,20 @@ function makeJiraAssetId(fieldId, identifier) { return `AST-JIRA-${createHash('s
 function normaliseAsset(input = {}, existing = {}) {
   return { ...existing, id: clean(input.id || existing.id || makeAssetId()), name: clean(input.name ?? existing.name ?? ''), jiraIdentifier: clean(input.jiraIdentifier ?? existing.jiraIdentifier ?? ''), jiraIdentifierFieldId: clean(input.jiraIdentifierFieldId ?? existing.jiraIdentifierFieldId ?? ''), jiraIdentifierFieldName: clean(input.jiraIdentifierFieldName ?? existing.jiraIdentifierFieldName ?? ''), jiraSyncRunId: clean(input.jiraSyncRunId ?? existing.jiraSyncRunId ?? ''), client: clean(input.client ?? existing.client ?? ''), jiraClientSyncRunId: clean(input.jiraClientSyncRunId ?? existing.jiraClientSyncRunId ?? ''), crewCode: clean(input.crewCode ?? existing.crewCode ?? ''), type: clean(input.type ?? existing.type ?? 'Other'), manufacturer: clean(input.manufacturer ?? existing.manufacturer ?? ''), model: clean(input.model ?? existing.model ?? ''), serialNumber: clean(input.serialNumber ?? existing.serialNumber ?? ''), assigneeAccountId: clean(input.assigneeAccountId ?? existing.assigneeAccountId ?? ''), assigneeName: clean(input.assigneeName ?? existing.assigneeName ?? ''), status: clean(input.status ?? existing.status ?? 'Available'), location: clean(input.location ?? existing.location ?? ''), purchaseDate: clean(input.purchaseDate ?? existing.purchaseDate ?? ''), warrantyExpiry: clean(input.warrantyExpiry ?? existing.warrantyExpiry ?? ''), notes: clean(input.notes ?? existing.notes ?? ''), customFields: typeof input.customFields === 'object' && input.customFields !== null ? input.customFields : (existing.customFields || {}), createdAt: existing.createdAt || now(), updatedAt: now() };
 }
-async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...event }); }
+async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...actorFields(), ...event }); }
 function faultHistoryKey(assetId,ticket){const label=clean(ticket?.fault||'');if(!label)return'';const fingerprint=createHash('sha256').update(`${ticket?.key||''}:${normaliseName(label)}`).digest('hex').slice(0,16);return `${FAULT_HISTORY_PREFIX}${assetId}:${ticket?.key||'unknown'}:${fingerprint}`;}
 async function recordFaultHistory(asset,ticket,knownKeys){const fault=clean(ticket?.fault||'');if(!asset?.id||!ticket?.key||ticket.relation!=='primary'||!fault)return null;const key=faultHistoryKey(asset.id,ticket);if(!key||knownKeys?.has(key))return null;const value={historyKey:key,assetId:asset.id,deviceName:asset.name||'',issueKey:ticket.key,fault,summary:ticket.summary||'',issueCreated:ticket.created||'',firstSeen:now(),statusAtFirstSeen:ticket.status||'',resolvedAtFirstSeen:Boolean(ticket.resolved)||ticket.statusCategory==='done'};await kvs.set(key,value);knownKeys?.add(key);return value;}
 async function queryAllByPrefix(prefix,limit=500) { const values = []; let cursor; const cap=Math.max(1,Math.min(Number(limit)||500,1000)); do { let query = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(Math.min(100,cap-values.length)); if (cursor) query = query.cursor(cursor); const page = await query.getMany(); values.push(...page.results.map((e) => e.value)); cursor = page.nextCursor; } while (cursor&&values.length<cap); return values.slice(0,cap); }
-async function assertUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); const assets = await queryAllByPrefix(ASSET_PREFIX); const duplicate = assets.find((a) => a.id !== assetId && normaliseName(a.name) === normalized); if (duplicate) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
-async function assertIndexedUniqueDeviceName(name, assetId) { const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.'); const indexed = await kvs.get(nameIndexKey(name)); if (indexed?.assetId && indexed.assetId !== assetId) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`); }
+// Device names are unique, checked through the name index that every create and rename keeps up to
+// date (one read, however large the register). An index entry whose device was deleted or renamed
+// is stale and does not block the name.
+async function assertUniqueDeviceName(name, assetId) {
+  const normalized = normaliseName(name); if (!normalized) throw new Error('Device name is required.');
+  const indexed = await kvs.get(nameIndexKey(name));
+  if (!indexed?.assetId || indexed.assetId === assetId) return;
+  const holder = await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);
+  if (holder && normaliseName(holder.name) === normalized) throw new Error(`Device name “${clean(name)}” already exists. Device names must be unique.`);
+}
 // options.existing: the stored record when the caller has just read it (saves a read).
 // options.extra: fields normaliseAsset does not carry (e.g. jiraAliases), written in the same set.
 async function saveOneAsset(supplied, source = 'manual', options = {}) {
@@ -82,9 +91,7 @@ async function saveOneAsset(supplied, source = 'manual', options = {}) {
   const asset = { ...normaliseAsset(supplied, existing || {}), ...(options.extra || {}) };
   if (source !== 'jira-sync' && !asset.curatedAt) asset.curatedAt = asset.updatedAt || now();
   if (source !== 'jira-sync') {
-    const fastImportSources=new Set(['bulk-import','import','import-reconcile','conflict-review']);
-    if(fastImportSources.has(source)) await assertIndexedUniqueDeviceName(asset.name,asset.id);
-    else await assertUniqueDeviceName(asset.name, asset.id);
+    await assertUniqueDeviceName(asset.name, asset.id);
   }
   const oldNameKey = existing?.name ? nameIndexKey(existing.name) : null;
   const newNameKey = nameIndexKey(asset.name);
@@ -121,6 +128,18 @@ function relatedIdentifiers(value) {
 }
 function ticketMatchesConfiguredProject(ticket,settings){const projectKey=clean(settings?.jiraProjectKey||'').toUpperCase();if(!projectKey)return true;const key=clean(ticket?.key||ticket?.issueKey||'').toUpperCase();return key.startsWith(projectKey+'-');}
 async function getSettingsValue(){return{...DEFAULT_SETTINGS,...((await kvs.get(SETTINGS_KEY))||{})};}
+// Device types match the configured Asset types list ignoring case and spacing, so "tablet" and
+// "Tablet" are one type. A type not on the list keeps its first spelling and is added to the list.
+function typeCatalog(settings){return{known:new Map(safeArray(settings?.assetTypes).map(t=>[normaliseName(t),clean(t)]).filter(([k])=>k)),added:new Map()};}
+function canonicalType(catalog,type){const raw=clean(type||'');const key=normaliseName(raw);if(!key)return raw;const match=catalog.known.get(key)||catalog.added.get(key);if(match)return match;catalog.added.set(key,raw);return raw;}
+async function addNewAssetTypes(catalog){
+  const types=[...catalog.added.values()];if(!types.length)return[];
+  const latest=await getSettingsValue();const merged=[...safeArray(latest.assetTypes)];const keys=new Set(merged.map(normaliseName));const added=[];
+  for(const type of types){const key=normaliseName(type);if(key&&!keys.has(key)){merged.push(type);keys.add(key);added.push(type);}}
+  if(added.length)await kvs.set(SETTINGS_KEY,{...latest,assetTypes:merged});
+  for(const [key,type] of catalog.added)catalog.known.set(key,type);catalog.added.clear();
+  return added;
+}
 async function getJiraCustomFields(){const response=await api.asUser().requestJira(route`/rest/api/3/field`,{headers:{Accept:'application/json'}});if(!response.ok)throw new Error(`Could not load Jira fields (${response.status}).`);const fields=await response.json();return safeArray(fields).filter(f=>String(f.id||'').startsWith('customfield_')).map(f=>({id:f.id,name:f.name||f.id,schemaType:f.schema?.type||'',customType:f.schema?.custom||''})).sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));}
 async function getJiraProjects(){const response=await api.asUser().requestJira(route`/rest/api/3/project/search?maxResults=100&orderBy=name`,{headers:{Accept:'application/json'}});if(!response.ok)throw new Error(`Could not load Jira projects (${response.status}).`);const data=await response.json();return safeArray(data.values).map(p=>({id:p.id,key:p.key,name:p.name})).filter(p=>p.key).sort((a,b)=>String(a.name||a.key).localeCompare(String(b.name||b.key),undefined,{sensitivity:'base'}));}
 async function resolveJiraAssetField(knownFields){const settings=await getSettingsValue();const fields=knownFields||await getJiraCustomFields();if(settings.jiraAssetField?.id){const selected=fields.find(f=>f.id===settings.jiraAssetField.id);if(selected)return selected;}const preferredNames=['device id','asset id','asset name','device name','asset','device'];return fields.find(f=>preferredNames.includes(normaliseName(f.name)))||null;}
@@ -181,13 +200,13 @@ async function syncAssetsFromJira({restart=false}={}){
   const{field,issues,settings}=page;
   if(!field){const result={timestamp:now(),field:null,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);return result;}
   if(!progress||progress.fieldId!==field.id){progress={fieldId:field.id,projectKey:settings.jiraProjectKey||'',runId:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,nextPageToken:null,issuesScanned:0,discovered:0,created:0,matched:0,ignored:0,reconciled:0,startedAt:now()};if(page.nextPageToken===null&&issues.length===0){const result={timestamp:now(),field,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);return result;}}
-  const{identifiers,ignored}=discoveredIdentifiersFromIssues(issues,field.id);
+  const{identifiers,ignored}=discoveredIdentifiersFromIssues(issues,field.id);const types=typeCatalog(settings);
   let batchCreated=0,batchMatched=0,batchDiscovered=0,batchConflicts=0;
   for(const identifier of identifiers){
     let asset=await findAssetForJiraIdentifier(field.id,identifier);
     const alreadyProcessed=asset?.jiraSyncRunId===progress.runId;
     if(!alreadyProcessed)batchDiscovered+=1;
-    const location=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraLocationField?.id);const type=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraTypeField?.id);const{value:crewCode,issue:crewIssue}=latestIssueValueForIdentifier(issues,field.id,identifier,settings.jiraCrewCodeField?.id);const crewPerson=crewCode?mappedCrewPerson(settings,crewCode):null;const holderName=crewCode?(crewPerson?.displayName||crewCode):'';const holderAccountId=crewPerson?.accountId||'';const base={jiraIdentifier:identifier,jiraIdentifierFieldId:field.id,jiraIdentifierFieldName:field.name,jiraSyncRunId:progress.runId};
+    const location=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraLocationField?.id);const type=canonicalType(types,latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraTypeField?.id));const{value:crewCode,issue:crewIssue}=latestIssueValueForIdentifier(issues,field.id,identifier,settings.jiraCrewCodeField?.id);const crewPerson=crewCode?mappedCrewPerson(settings,crewCode):null;const holderName=crewCode?(crewPerson?.displayName||crewCode):'';const holderAccountId=crewPerson?.accountId||'';const base={jiraIdentifier:identifier,jiraIdentifierFieldId:field.id,jiraIdentifierFieldName:field.name,jiraSyncRunId:progress.runId};
     if(asset){const locationUpdate=Boolean(location&&(!alreadyProcessed||!clean(asset.location)));const typeUpdate=Boolean(type&&(!alreadyProcessed||!clean(asset.type)||asset.type==='Other'));// A ticket only fills in a missing holder. When the device already has a different holder the
     // ticket may be a handover, someone reporting for a colleague, or a mistyped Device ID, so it is
     // recorded as a conflict for review instead of reassigning the device.
@@ -195,6 +214,7 @@ async function syncAssetsFromJira({restart=false}={}){
     if(holder?.hasHolder&&!alreadyProcessed){if(holder.same)await kvs.delete(HOLDER_CONFLICT_PREFIX+asset.id);else if(await recordHolderConflict(asset,crewIssue,{crewCode,holderName,holderAccountId}))batchConflicts+=1;}if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}
     await recordScannedTicketsForAsset(asset,issues,field,settings,progress.runId);
   }
+  await addNewAssetTypes(types);
   progress={...progress,nextPageToken:page.nextPageToken,issuesScanned:progress.issuesScanned+issues.length,discovered:progress.discovered+batchDiscovered,created:progress.created+batchCreated,matched:progress.matched+batchMatched,ignored:progress.ignored+ignored,conflicts:(progress.conflicts||0)+batchConflicts};
   const complete=!page.nextPageToken;const processed=progress.created+progress.matched;const result={timestamp:now(),field,issuesScanned:progress.issuesScanned,discovered:progress.discovered,processed,created:progress.created,matched:progress.matched,ignored:progress.ignored,reconciled:progress.reconciled,conflicts:progress.conflicts||0,complete};if(complete){await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);}else await kvs.set(SYNC_PROGRESS_KEY,progress);return result;
 }
@@ -345,8 +365,8 @@ resolver.define('previewAssetImportReconciliation',async({payload})=>{
   return results;
 });
 resolver.define('reconcileAssetImport',async({payload})=>{
-  const rows=safeArray(payload?.assets).slice(0,100);
-  const settings=await getSettingsValue();
+  const settings=await getSettingsValue();const types=typeCatalog(settings);
+  const rows=safeArray(payload?.assets).slice(0,100).map(row=>row?.type?{...row,type:canonicalType(types,row.type)}:row);
   let created=0,updated=0,merged=0;const failed=[];
   // Rows run IMPORT_CONCURRENCY at a time. Rows that resolve to the same existing device, or create the
   // same Device Name, share a lock so they are applied one after another.
@@ -378,7 +398,8 @@ resolver.define('reconcileAssetImport',async({payload})=>{
   const worker=async()=>{while(next<rows.length){const i=next++;const row=rows[i]||{};try{const outcome=await importRow(row);if(outcome==='created')created+=1;else if(outcome==='merged')merged+=1;else updated+=1;}catch(error){failed.push({index:i,name:row?.name||'',error:error?.message||'Import reconciliation failed.'});}}};
   await Promise.all(Array.from({length:Math.min(IMPORT_CONCURRENCY,rows.length)},worker));
   failed.sort((a,b)=>a.index-b.index);
-  return{processed:rows.length,created,updated,merged,failed};
+  const deviceTypesAdded=await addNewAssetTypes(types);
+  return{processed:rows.length,created,updated,merged,failed,deviceTypesAdded};
 });
 
 function holderOf(asset){return clean(asset?.assigneeName)||clean(asset?.crewCode)||'';}
@@ -428,7 +449,45 @@ resolver.define('resolveDataConflict',async({payload,context})=>{
   await addHistory(assetId,{type:'holder-conflict-kept',source:'conflict-review',issueKey:conflict.issueKey,resolvedBy:by,message:`Kept holder ${holderOf(asset)||'unassigned'}; ${ticket} named ${conflict.ticketHolder}`});
   return{ok:true};
 });
-resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`,1000);return history.sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
+// One page of the register: devices whose type differs only in case or spacing from a known type
+// are changed to that spelling. The UI calls this until nextCursor is empty.
+resolver.define('tidyAssetTypes',async({payload})=>{
+  const types=typeCatalog(await getSettingsValue());
+  let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);const cursor=clean(payload?.cursor||'');if(cursor)q=q.cursor(cursor);
+  const page=await q.getMany();let changed=0;
+  for(const {value:asset} of safeArray(page.results)){
+    if(!asset?.id||!clean(asset.type))continue;
+    const type=canonicalType(types,asset.type);if(type===asset.type)continue;
+    await kvs.set(ASSET_PREFIX+asset.id,{...asset,type,updatedAt:now()});
+    await addHistory(asset.id,{type:'updated',source:'type-tidy',message:'Device type matched to the Asset types list',changes:[{field:'device type',from:asset.type,to:type}]});
+    changed+=1;
+  }
+  const typesAdded=await addNewAssetTypes(types);
+  return{scanned:page.results.length,changed,typesAdded,nextCursor:page.nextCursor||null};
+});
+// Open fault tickets across the whole scanned project, counted by Jira in one request: tickets with a
+// device and a fault, not resolved and not done (the same rule as the fault report). count is null
+// when Jira cannot count, so the Overview falls back to the devices it has loaded.
+resolver.define('getOpenFaultCount',async()=>{
+  const settings=await getSettingsValue();
+  if(!settings.jiraFaultField?.id)return{count:0,configured:false};
+  const field=await resolveJiraAssetField().catch(()=>null);if(!field)return{count:null,configured:true};
+  const id=(f)=>String(f).replace('customfield_','');
+  const jql=`${projectScope(settings)}cf[${id(field.id)}] is not EMPTY AND cf[${id(settings.jiraFaultField.id)}] is not EMPTY AND resolution is EMPTY AND statusCategory != Done`;
+  try{const response=await api.asUser().requestJira(route`/rest/api/3/search/approximate-count`,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({jql})});if(!response.ok)return{count:null,configured:true};const body=await response.json();return{count:Number.isFinite(body?.count)?body.count:null,configured:true};}
+  catch{return{count:null,configured:true};}
+});
+// Display names for account ids, in one Jira call per 100 people. Missing names are left out;
+// the history still shows the change.
+async function jiraUserNames(accountIds){
+  const ids=[...new Set(accountIds.filter(Boolean))];const names=new Map();
+  for(let i=0;i<ids.length;i+=100){
+    const query=new URLSearchParams([['maxResults','100'],...ids.slice(i,i+100).map(id=>['accountId',id])]);
+    try{const response=await api.asUser().requestJira(route`/rest/api/3/user/bulk?${query}`,{headers:{Accept:'application/json'}});if(!response.ok)continue;const body=await response.json();for(const user of safeArray(body?.values))if(user?.accountId)names.set(user.accountId,user.displayName||'');}catch{}
+  }
+  return names;
+}
+resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`,1000);const names=await jiraUserNames(history.map(h=>h.changedBy||h.resolvedBy));return history.map(h=>{const by=h.changedBy||h.resolvedBy;return by&&names.get(by)?{...h,changedByName:names.get(by)}:h;}).sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
 resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const settings=await getSettingsValue();const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`,1000);return history.filter(item=>ticketMatchesConfiguredProject(item,settings)).sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});
 resolver.define('getSettings',async()=>getSettingsValue());
 resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};const previousSettings=await getSettingsValue();const normaliseField=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;const settings={assetTypes:safeArray(incoming.assetTypes).map(clean).filter(Boolean),statuses:safeArray(incoming.statuses).map(clean).filter(Boolean),locations:safeArray(incoming.locations).map(clean).filter(Boolean),customFields:safeArray(incoming.customFields).map(f=>({key:clean(f.key),label:clean(f.label),type:clean(f.type||'text')})).filter(f=>f.key&&f.label),jiraAssetField:normaliseField(incoming.jiraAssetField),jiraRelatedAssetField:normaliseField(incoming.jiraRelatedAssetField),jiraLocationField:normaliseField(incoming.jiraLocationField),jiraTypeField:normaliseField(incoming.jiraTypeField),jiraCrewCodeField:normaliseField(incoming.jiraCrewCodeField),jiraClientField:normaliseField(incoming.jiraClientField),jiraProjectKey:clean(incoming.jiraProjectKey||''),jiraFaultField:normaliseField(incoming.jiraFaultField),crewMappings:safeArray(incoming.crewMappings).map(m=>({crewCode:clean(m.crewCode),accountId:clean(m.accountId),displayName:clean(m.displayName)})).filter(m=>m.crewCode&&(m.displayName||m.accountId)),jiraDiscoveryEnabled:incoming.jiraDiscoveryEnabled!==false};if(!settings.assetTypes.length)settings.assetTypes=DEFAULT_SETTINGS.assetTypes;if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;settings.statusAutomationEnabled=incoming.statusAutomationEnabled===true;settings.statusRules=normaliseStatusRules(incoming.statusRules,settings.statuses);settings.replacement=normaliseReplacementSettings(incoming.replacement,settings.statuses);const previousFaultFieldId=clean(previousSettings?.jiraFaultField?.id||'');const nextFaultFieldId=clean(settings?.jiraFaultField?.id||'');const previousProjectKey=clean(previousSettings?.jiraProjectKey||'');const nextProjectKey=clean(settings?.jiraProjectKey||'');if(previousFaultFieldId!==nextFaultFieldId||previousProjectKey!==nextProjectKey){const cachedTickets=await queryAllByPrefix(ASSET_TICKET_PREFIX);for(const ticket of cachedTickets){if(ticket?.assetId&&ticket?.key&&ticket?.relation)await kvs.delete(`${ASSET_TICKET_PREFIX}${ticket.assetId}:${ticket.key}:${ticket.relation}`);}const faultHistory=await queryAllByPrefix(FAULT_HISTORY_PREFIX);for(const item of faultHistory){if(item?.historyKey)await kvs.delete(item.historyKey);}console.log('Device Fault mapping changed; cleared cached ticket/fault data');}await kvs.set(SETTINGS_KEY,settings);if(scanSignature(previousSettings)!==scanSignature(settings)){await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);}return settings;});
