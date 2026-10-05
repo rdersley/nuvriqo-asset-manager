@@ -534,7 +534,7 @@ function suggestDevice(value,lookup){
   const key=normaliseName(value);const pick=(a,matchedBy)=>({assetId:a.id,deviceId:a.jiraIdentifier||a.name,name:a.name,matchedBy});
   if(lookup.bySerial.has(key))return pick(lookup.bySerial.get(key),'serial number');
   if(lookup.byId.has(key))return pick(lookup.byId.get(key),'device name or earlier ID');
-  for(const token of String(value).split(/[\s,;/|]+/).map(normaliseName).filter(t=>t.length>=4)){
+  for(const token of String(value).split(/[\s,;/|=^:]+/).map(normaliseName).filter(t=>t.length>=4)){
     if(lookup.byId.has(token))return pick(lookup.byId.get(token),'Device ID inside the value');
     if(lookup.bySerial.has(token))return pick(lookup.bySerial.get(token),'serial number inside the value');
   }
