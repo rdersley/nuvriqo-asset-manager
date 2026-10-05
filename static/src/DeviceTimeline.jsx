@@ -41,7 +41,7 @@ export default function DeviceTimeline({ assetId }) {
         </tbody></table>
       </div>}
       {data.truncated && <div className="notice">This device has more tickets than one search returns; the oldest may be missing.</div>}
-      {!data.live && <div className="notice">Jira couldn't be searched just now; showing the tickets recorded by the last Jira scan.</div>}
+      {!data.live && <div className="notice">Jira couldn't be searched just now{data.searchError ? ` (${data.searchError})` : ''}; showing the tickets recorded by the last Jira scan, which only include the assignment reference and base once the scan has run since this update.</div>}
       {events.length ? <div className="table-wrap"><table className="fault-table" aria-label="Holder timeline"><thead><tr><th>Date</th><th>Event</th><th>Assignment reference</th><th>Base</th><th>Details</th></tr></thead><tbody>
         {events.map((e, i) => e.kind === 'ticket'
           ? <tr key={`t-${e.key}-${i}`} style={{ cursor: 'default' }}><td>{day(e.at)}</td><td><button className="issue-link" onClick={() => router.open(`/browse/${e.key}`)}>{e.key}</button>{e.relation === 'related' ? <small style={{ display: 'block' }}>Related device</small> : null}</td><td>{e.crewCode || '—'}{e.otherHolder ? <span className="status-pill" style={{ marginLeft: 6 }}>Other holder</span> : null}</td><td>{e.base || '—'}</td><td>{e.summary || 'Ticket'}{e.status ? <small style={{ display: 'block' }}>{[e.issueType, e.status].filter(Boolean).join(' · ')}</small> : null}</td></tr>

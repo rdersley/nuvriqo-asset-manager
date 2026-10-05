@@ -523,13 +523,14 @@ resolver.define('resolveDataConflict',async({payload,context})=>{
 resolver.define('getDeviceTimeline',async({payload})=>{
   const assetId=clean(payload?.assetId||'');if(!assetId)return null;
   const asset=await kvs.get(ASSET_PREFIX+assetId);if(!asset)return null;
-  let tickets=[],truncated=false,live=true;
-  try{({tickets,truncated}=await searchAssetTicketsDetailed(assetId));}
-  catch{live=false;const byKey=new Map();for(const t of await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`))if(!byKey.has(t.key)||t.relation==='primary')byKey.set(t.key,t);tickets=[...byKey.values()];}
+  let tickets=[],truncated=false,live=true,searchError='';
+  // One retry: a busy Jira (429) often answers a second later.
+  try{({tickets,truncated}=await searchAssetTicketsDetailed(assetId).catch(async()=>{await new Promise(r=>setTimeout(r,1500));return searchAssetTicketsDetailed(assetId);}));}
+  catch(e){live=false;searchError=clean(e?.message||'')||'Jira search failed';const byKey=new Map();for(const t of await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`))if(!byKey.has(t.key)||t.relation==='primary')byKey.set(t.key,t);tickets=[...byKey.values()];}
   const history=await queryAllByPrefix(`${HISTORY_PREFIX}${assetId}:`,1000);
   const names=await jiraUserNames(history.map(h=>h.changedBy||h.resolvedBy));
   const named=history.map(h=>{const by=h.changedBy||h.resolvedBy;return by&&names.get(by)?{...h,changedByName:names.get(by)}:h;});
-  return{...buildDeviceTimeline(asset,tickets,named),truncated,live};
+  return{...buildDeviceTimeline(asset,tickets,named),truncated,live,searchError};
 });
 // Bulk holder review, one page of open holder conflicts per call. A device is a candidate when
 // its newest minTickets or more tickets (as recorded by the Jira scan) were all raised under one
