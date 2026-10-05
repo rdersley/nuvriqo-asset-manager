@@ -11,7 +11,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // sendBatch(rows) resolves to the reconcileAssetImport result for those rows.
 // Returns the extra counts and the failures still left (indexes into rows).
 export async function retryBusyRows(rows, failed, sendBatch, { delays = BUSY_RETRY_DELAYS_MS, wait = pause, batchSize = 25, onRetry } = {}) {
-  const totals = { created: 0, updated: 0, merged: 0, deviceTypesAdded: [] };
+  const totals = { created: 0, updated: 0, merged: 0, unchanged: 0, deviceTypesAdded: [] };
   let left = failed;
   for (const delay of delays) {
     const busy = left.filter(isBusyFailure);
@@ -24,7 +24,7 @@ export async function retryBusyRows(rows, failed, sendBatch, { delays = BUSY_RET
       let result;
       try { result = await sendBatch(chunk.map((f) => rows[f.index])); }
       catch (error) { still.push(...chunk.map((f) => ({ ...f, error: error?.message || f.error }))); continue; }
-      totals.created += result.created || 0; totals.updated += result.updated || 0; totals.merged += result.merged || 0;
+      totals.created += result.created || 0; totals.updated += result.updated || 0; totals.merged += result.merged || 0; totals.unchanged += result.unchanged || 0;
       totals.deviceTypesAdded.push(...(result.deviceTypesAdded || []));
       for (const f of result.failed || []) still.push({ ...f, index: chunk[f.index ?? 0].index });
     }

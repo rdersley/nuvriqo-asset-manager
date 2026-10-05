@@ -157,8 +157,9 @@ function excelShortened(asset) {
   return hit ? `${hit[1]} ${String(asset[hit[0]]).trim()} was shortened by Excel. Format the column as Text in Excel (or export it again from the source) and import the file again.` : '';
 }
 
-export function validateImportRows(rows, existingAssets = []) {
-  const existing = new Set(existingAssets.map((asset) => normaliseName(asset.name)));
+// A row whose Device Name is already in the register updates that device (empty cells leave its
+// values alone); the import works out the match.
+export function validateImportRows(rows) {
   const seen = new Set();
   return rows.map((asset, index) => {
     const name = String(asset.name || '').trim();
@@ -166,7 +167,6 @@ export function validateImportRows(rows, existingAssets = []) {
     let error = '';
     if (!name) error = 'Device Name is required.';
     else if (seen.has(key)) error = 'Duplicate Device Name in this file.';
-    else if (existing.has(key) && !asset.id) error = 'Device Name already exists.';
     else error = excelShortened(asset);
     seen.add(key);
     return { ...asset, _row: index + 2, _error: error };

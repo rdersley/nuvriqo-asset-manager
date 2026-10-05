@@ -139,14 +139,21 @@ test('a value Jira search cannot find stays on the list with its tickets', async
 });
 
 test('a format can belong to a device type', () => {
-  const rule = compileDeviceIdPatterns(['Tablet: TAB####', 'vpos: VPOS-*', 'DEV####', 'Not a type: X##'], ['Tablet', 'vPOS']);
-  assert.deepEqual(rule.map((r) => [r.type, r.pattern]), [['Tablet', 'TAB####'], ['vPOS', 'VPOS-*'], [null, 'DEV####'], [null, 'Not a type: X##']]);
+  const rule = compileDeviceIdPatterns(['Tablet: TAB####', 'vpos: VPOS-*', 'DEV####', 'AB:##'], ['Tablet', 'vPOS']);
+  assert.deepEqual(rule.map((r) => [r.type, r.pattern]), [['Tablet', 'TAB####'], ['vPOS', 'VPOS-*'], [null, 'DEV####'], [null, 'AB:##']]);
   assert.deepEqual(checkDeviceId('tab0001', rule), { ok: true, type: 'Tablet' });
   assert.deepEqual(checkDeviceId('VPOS-12', rule), { ok: true, type: 'vPOS' });
   assert.deepEqual(checkDeviceId('DEV0001', rule), { ok: true, type: null });
   assert.equal(checkDeviceId('ABC9999', rule, 'tablet').reason, "Doesn't match the Tablet format (TAB####)");
   assert.equal(checkDeviceId('ABC9999', rule, 'Phone').reason, "Doesn't match the Device ID format");
   assert.equal(checkDeviceId('VPOS-12', rule, 'Tablet').ok, true, 'another type\'s format still counts as a Device ID');
+});
+
+test('a type not yet in Asset types still names the format, and is marked unlisted', () => {
+  const rule = compileDeviceIdPatterns(['vPOS: RYRS######', 'PED: RYRBP#####'], ['Tablet']);
+  assert.deepEqual(rule.map((r) => [r.type, r.pattern, Boolean(r.unlisted)]), [['vPOS', 'RYRS######', true], ['PED', 'RYRBP#####', true]]);
+  assert.deepEqual(checkDeviceId('RYRS512717', rule), { ok: true, type: 'vPOS' });
+  assert.equal(compileDeviceIdPatterns(['vPOS: RYRS######'], ['vpos'])[0].unlisted, undefined);
 });
 
 test('the scan gives a new device the type its Device ID matched', async () => {
