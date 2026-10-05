@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from './invoke.js';
+import { isBusyFailure } from './importRetry.js';
 import { duplicateTargets, importTargets, mapImportRows, mappingToRemember, readImportTable, suggestMapping, validateImportRows } from './importUtils';
 
 const MAPPING_KEY = 'nuvriqo.assetImport.mapping';
@@ -119,23 +120,28 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
     setOutcome('');
     setProgress(`Importing 0 / ${total}…`);
     try {
-      const result = await onImport(validRows.map(({ _row, _error, _reconcile, ...asset }) => asset), (done) => setProgress(`Importing ${done} / ${total}…`));
+      const result = await onImport(validRows.map(({ _row, _error, _reconcile, ...asset }) => asset), (done, _total, retrying) => setProgress(retrying ? `Imported ${done} / ${total}; Jira is busy, trying ${retrying} rows again shortly…` : `Importing ${done} / ${total}…`));
       const failed = result?.failed || [];
       const done = result?.done ?? total;
       if (!failed.length && !result?.error) { onClose(); return; }
       // Drop the rows that were imported so pressing Import again cannot repeat them. Rows that
       // failed stay listed with their reason; rows not reached yet stay ready to import.
-      const reasons = new Map(failed.map((f) => [f.index, f.error || 'Could not be imported.']));
+      // Rows Jira was still too busy for stay ready to import, so pressing Import tries them again.
+      const busy = failed.filter(isBusyFailure);
+      const reasons = new Map(failed.filter((f) => !isBusyFailure(f)).map((f) => [f.index, f.error || 'Could not be imported.']));
+      const busyRows = new Set(busy.map((f) => f.index));
       let index = 0;
       setRows(rows.flatMap((row) => {
         if (row._error) return [row];
         const i = index++;
+        if (busyRows.has(i)) return [{ ...row, _reconcile: { action: 'deferred', message: 'Jira was busy; press Import to try again.' } }];
         if (reasons.has(i)) return [{ ...row, _error: reasons.get(i), _reconcile: null }];
         return i >= done ? [row] : [];
       }));
       const imported = (result.created || 0) + (result.updated || 0) + (result.merged || 0);
       const parts = [`${imported} imported (${result.created || 0} created, ${result.updated || 0} updated, ${result.merged || 0} merged)`];
-      if (failed.length) parts.push(`${failed.length} could not be imported; the reason is shown in the Result column`);
+      if (reasons.size) parts.push(`${reasons.size} could not be imported; the reason is shown in the Result column`);
+      if (busy.length) parts.push(`${busy.length} were not imported because Jira was busy; press Import to try them again`);
       if (result.error) parts.push(`the import stopped after ${done} of ${total} rows (${result.error}). Press Import to continue with the remaining ${total - done}`);
       setOutcome(`${parts.join('; ')}.`);
     } catch (e) {

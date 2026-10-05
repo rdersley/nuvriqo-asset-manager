@@ -148,6 +148,15 @@ export async function readAssetImportFile(file, customFields = [], remembered = 
   return mapImportRows(table, suggestMapping(table.headers, customFields, remembered));
 }
 
+// Excel shows long numbers such as IMEIs as 3.51633E+14 and saves them that way in a CSV,
+// losing the last digits. Such a value would be wrong on the device and could match other devices.
+const SHORTENED = /^\d(?:\.\d+)?E\+?\d+$/i;
+const CHECKED_FIELDS = [['serialNumber', 'Serial Number'], ['jiraIdentifier', 'Device ID'], ['name', 'Device Name'], ['crewCode', 'Assignment Reference']];
+function excelShortened(asset) {
+  const hit = CHECKED_FIELDS.find(([key]) => SHORTENED.test(String(asset[key] ?? '').trim()));
+  return hit ? `${hit[1]} ${String(asset[hit[0]]).trim()} was shortened by Excel. Format the column as Text in Excel (or export it again from the source) and import the file again.` : '';
+}
+
 export function validateImportRows(rows, existingAssets = []) {
   const existing = new Set(existingAssets.map((asset) => normaliseName(asset.name)));
   const seen = new Set();
@@ -158,6 +167,7 @@ export function validateImportRows(rows, existingAssets = []) {
     if (!name) error = 'Device Name is required.';
     else if (seen.has(key)) error = 'Duplicate Device Name in this file.';
     else if (existing.has(key) && !asset.id) error = 'Device Name already exists.';
+    else error = excelShortened(asset);
     seen.add(key);
     return { ...asset, _row: index + 2, _error: error };
   });
