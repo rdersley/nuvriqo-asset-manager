@@ -5,6 +5,7 @@ import { kvs, WhereConditions } from '@forge/kvs';
 import { createHash } from 'node:crypto';
 
 import { trackActor, actorFields } from './actor.js';
+import { checkDeviceId, compileDeviceIdPatterns } from './device-id-rule.js';
 const resolver = trackActor(licensedResolver(new Resolver()));
 const ASSET_NAME_PREFIX = 'asset-name:';
 // Bounded fallback for assets the indexes cannot find (see resolveIdentifiers).
@@ -110,11 +111,41 @@ async function resolveIdentifiers(identifiers, fieldId) {
   return found;
 }
 
+// A device the Device ID field probably meant: the value is its serial number, or contains its
+// Device ID ("DEV1234 cracked"). Bounded like resolveIdentifiers.
+async function suggestDevice(value) {
+  const target = normalise(value);
+  const tokens = String(value).split(/[\s,;/|]+/).map(normalise).filter((t) => t.length >= 4);
+  let cursor;
+  for (let page = 0; page < ASSET_SCAN_PAGES; page += 1) {
+    let query = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);
+    if (cursor) query = query.cursor(cursor);
+    const result = await query.getMany();
+    for (const { value: asset } of result.results) {
+      if (normalise(asset?.serialNumber) && normalise(asset.serialNumber) === target) return { assetId: asset.id, deviceId: asset.jiraIdentifier || asset.name, matchedBy: 'serial number' };
+      if (tokens.some((t) => assetIdentifiers(asset).includes(t))) return { assetId: asset.id, deviceId: asset.jiraIdentifier || asset.name, matchedBy: 'Device ID inside the value' };
+    }
+    cursor = result.nextCursor;
+    if (!cursor) break;
+  }
+  return null;
+}
+
+// Why the ticket's Device ID found no device: not a Device ID by the configured format (with a
+// suggested device when there is one), or a valid Device ID that isn't registered.
+async function deviceIdCheckFor(value, cfg, ticketType) {
+  const check = checkDeviceId(value, compileDeviceIdPatterns(cfg.deviceIdPatterns, cfg.assetTypes), ticketType);
+  if (!check) return null;
+  if (check.ok) return { status: 'unregistered', value };
+  return { status: 'invalid', value, reason: check.reason, suggestion: await suggestDevice(value) };
+}
+
 async function issueContext(issueKey) {
   const cfg = await settings();
   const primaryFieldId = cfg.jiraAssetField?.id || '';
   const relatedFieldId = cfg.jiraRelatedAssetField?.id || '';
-  const issue = await getIssue(issueKey, [primaryFieldId, relatedFieldId]);
+  const typeFieldId = cfg.jiraTypeField?.id || '';
+  const issue = await getIssue(issueKey, [primaryFieldId, relatedFieldId, typeFieldId]);
 
   const storedPrimary = await kvs.get(`${PRIMARY_LINK_PREFIX}${issueKey}`);
   const primaryIdentifier = primaryFieldId ? firstValue(issue.fields?.[primaryFieldId]) : '';
@@ -125,6 +156,7 @@ async function issueContext(issueKey) {
   const primaryAsset = fieldPrimary || storedPrimaryAsset || null;
 
   const relatedAssets = relatedIds.map((identifier) => ({ identifier, asset: resolved.get(normalise(identifier)) || null }));
+  const deviceIdCheck = primaryIdentifier && !fieldPrimary ? await deviceIdCheckFor(primaryIdentifier, cfg, typeFieldId ? firstValue(issue.fields?.[typeFieldId]) : '') : null;
 
   return {
     issueKey,
@@ -132,6 +164,7 @@ async function issueContext(issueKey) {
     primaryIdentifier,
     relatedAssets,
     relatedIdentifiers: relatedIds,
+    deviceIdCheck,
     configured: {
       primary: Boolean(primaryFieldId),
       related: Boolean(relatedFieldId),

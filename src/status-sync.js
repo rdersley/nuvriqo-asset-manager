@@ -5,8 +5,12 @@ import {
   deviceFieldIds, matchStatusRule, normaliseReplacementSettings, normaliseStatusRules, replacementApplies,
   statusChangeFromEvent, STATUS_AUTOMATION_LOG_KEY, STATUS_AUTOMATION_LOG_SIZE
 } from './status-automation.js';
+import { checkDeviceId, compileDeviceIdPatterns } from './device-id-rule.js';
+import { recordTicketRejection } from './device-id-review.js';
 
-// Trigger on avi:jira:updated:issue (internal edition). When a ticket's status changes:
+// Trigger on avi:jira:created:issue and avi:jira:updated:issue (internal edition).
+// When a ticket is created or its Device ID changes, a value that isn't a Device ID goes onto the
+// Device ID clean-up list straight away. When a ticket's status changes:
 // - status rules set the status of the device on the ticket (main Device ID field, or the
 //   "existing" field of a replacement pair on HW tickets);
 // - the replacement rule moves the old device's holder, client and location onto the
@@ -117,11 +121,38 @@ async function applyReplacement(settings, fields, issueKey, change, replacement)
   return results;
 }
 
+// The Device ID field of a ticket being created or edited, checked against the configured format.
+// Updates that change no custom field leave before any storage or Jira call.
+async function checkDeviceIdOnSave(event, issueKey) {
+  const items = Array.isArray(event?.changelog?.items) ? event.changelog.items : [];
+  const created = /created/.test(String(event?.eventType || '')) || !event?.changelog;
+  if (!issueKey || (!created && !items.some((i) => String(i?.fieldId || '').startsWith('customfield_')))) return null;
+  const stored = (await kvs.get(SETTINGS_KEY)) || {};
+  const fieldId = clean(stored.jiraAssetField?.id);
+  if (!fieldId || (!created && !items.some((i) => i?.fieldId === fieldId))) return null;
+  const typeFieldId = clean(stored.jiraTypeField?.id);
+  const response = await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}?fields=${['project', fieldId, typeFieldId].filter(Boolean).join(',')}`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) return { deviceId: 'jira-read-failed' };
+  const fields = (await response.json()).fields || {};
+  // Only the project Asset Manager scans, like the Jira scan itself.
+  const projectKey = clean(stored.jiraProjectKey).toUpperCase();
+  if (projectKey && clean(fields.project?.key).toUpperCase() !== projectKey) return null;
+  const compiled = compileDeviceIdPatterns(stored.deviceIdPatterns, stored.assetTypes);
+  const ticketType = typeFieldId ? firstValue(fields[typeFieldId]) : '';
+  const rejected = [];
+  for (const value of fieldValues(fields[fieldId])) {
+    const check = checkDeviceId(value, compiled, ticketType);
+    if (check && !check.ok) { await recordTicketRejection(value, check.reason, issueKey); rejected.push(value); }
+  }
+  return { deviceIdRejected: rejected };
+}
+
 export async function handler(event) {
-  // Most issue updates are not status changes; leave before any storage or Jira call.
-  const change = statusChangeFromEvent(event);
   const issueKey = clean(event?.issue?.key);
-  if (!change || !issueKey) return { skipped: 'not-a-status-change' };
+  const deviceIdCheck = await checkDeviceIdOnSave(event, issueKey).catch(() => ({ deviceId: 'check-failed' }));
+  // Most issue updates are not status changes; leave before any further storage or Jira call.
+  const change = statusChangeFromEvent(event);
+  if (!change || !issueKey) return { skipped: 'not-a-status-change', ...(deviceIdCheck || {}) };
 
   const stored = (await kvs.get(SETTINGS_KEY)) || {};
   const rules = stored.statusAutomationEnabled ? normaliseStatusRules(stored.statusRules, stored.statuses || []) : [];

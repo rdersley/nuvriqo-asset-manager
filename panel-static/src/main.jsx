@@ -74,6 +74,13 @@ function App() {
         {ctx?.primaryAsset ? (
           <div className="asset-card primary"><strong>{ctx.primaryAsset.name}</strong><small>{[ctx.primaryAsset.type, ctx.primaryAsset.status, ctx.primaryAsset.assigneeName || ctx.primaryAsset.crewCode].filter(Boolean).join(' · ')}</small></div>
         ) : <p className="muted">No primary asset linked.</p>}
+        {ctx?.deviceIdCheck?.status === 'invalid' && (
+          <div className="warning" role="alert">
+            <strong>“{ctx.deviceIdCheck.value}” isn't a Device ID.</strong> {ctx.deviceIdCheck.reason}.
+            {ctx.deviceIdCheck.suggestion ? <> It matches the {ctx.deviceIdCheck.suggestion.matchedBy} of <strong>{ctx.deviceIdCheck.suggestion.deviceId}</strong>. <button disabled={busy} className="link-button" onClick={() => run('setPrimaryAsset', { assetId: ctx.deviceIdCheck.suggestion.assetId }, `Device ID set to ${ctx.deviceIdCheck.suggestion.deviceId}.`)}>Use {ctx.deviceIdCheck.suggestion.deviceId}</button></> : ' Find the right device below and choose Primary.'}
+          </div>
+        )}
+        {ctx?.deviceIdCheck?.status === 'unregistered' && <div className="warning" role="status">“{ctx.deviceIdCheck.value}” isn't registered in Asset Manager yet. Check it's right: a Jira scan would add it as a new device.</div>}
       </section>
 
       <section>

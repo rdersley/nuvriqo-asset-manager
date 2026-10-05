@@ -7,6 +7,7 @@ import { normaliseReplacementSettings, normaliseStatusRules, STATUS_AUTOMATION_L
 import { licensedResolver } from './licence.js';
 import { trackActor, actorFields } from './actor.js';
 import { checkDeviceId, compileDeviceIdPatterns } from './device-id-rule.js';
+import { DEVICE_ID_REVIEW_PREFIX, deviceIdReviewKey } from './device-id-review.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
@@ -35,8 +36,6 @@ const HISTORY_PREFIX = 'asset-history:';
 const FAULT_HISTORY_PREFIX = 'fault-history:';
 // One record per device whose Jira tickets name a different holder than Asset Manager.
 const HOLDER_CONFLICT_PREFIX = 'holder-conflict:';
-// One record per value in the Jira Device ID field that is not a real Device ID, for clean-up.
-const DEVICE_ID_REVIEW_PREFIX = 'device-id-review:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SYNC_KEY = 'sync:asset-manager:jira-field';
 const SYNC_PROGRESS_KEY = 'sync-progress:asset-manager:jira-field';
@@ -203,7 +202,6 @@ function discoveredIdentifiersFromIssues(issues,fieldId,settings={}){
   }
   return{identifiers:[...discovered.values()],ignored,rejected,typeOf};
 }
-const deviceIdReviewKey=(value)=>`${DEVICE_ID_REVIEW_PREFIX}${Buffer.from(normaliseName(value),'utf8').toString('base64url')}`;
 // Adds one page's rejected values to their review records. Counts restart with each scan run, so a
 // record shows how many tickets carry the value now. Ignored values stay ignored; a value that was
 // fixed but turns up again is reopened.
