@@ -38,6 +38,7 @@ export default function ImportDialog({ onImport, onClose }) {
     setBusy(true);
     setError('');
     setOutcome('');
+    setProgress(`Reading ${file.name}…`);
     try {
       const read = await readImportTable(file);
       const suggested = suggestMapping(read.headers, customFields, loadRemembered());
@@ -55,6 +56,7 @@ export default function ImportDialog({ onImport, onClose }) {
       setError(e?.message || 'Could not read this file.');
     } finally {
       setBusy(false);
+      setProgress('');
     }
   }
 
@@ -72,6 +74,7 @@ export default function ImportDialog({ onImport, onClose }) {
       setError(e?.message || 'Could not check the rows.');
     } finally {
       setBusy(false);
+      setProgress('');
     }
   }
 
@@ -92,6 +95,7 @@ export default function ImportDialog({ onImport, onClose }) {
       const matches=[];
       const previewBatchSize=50;
       for(let i=0;i<previewRows.length;i+=previewBatchSize){
+        setProgress(`Checking rows against the register… ${i} / ${previewRows.length}`);
         const batch=previewRows.slice(i,i+previewBatchSize).map(({_row,_error,...asset})=>asset);
         const result=await invoke('previewAssetImportReconciliation',{assets:batch});
         matches.push(...(result||[]));
