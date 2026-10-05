@@ -107,3 +107,63 @@ test('a conflict clears itself when the holder is fixed by hand or the device is
   await scan();
   assert.equal(store.has('holder-conflict:A1'), false);
 });
+
+// Assigned-since dates, the device timeline and the bulk holder review.
+const bulk = (payload) => main.bulkHolderConflicts({ payload, context: { accountId: 'admin-1' } });
+const bulkAll = async (payload) => { let cursor = null; const out = { checked: 0, applied: 0, candidates: [] }; do { const r = await bulk({ ...payload, cursor }); out.checked += r.checked; out.applied += r.applied; out.candidates.push(...r.candidates); cursor = r.nextCursor; } while (cursor); return out; };
+
+test('accepting a conflict dates the assignment from the ticket', async () => {
+  issues = [ticket('OPS-7', 'DEV100', 'BEN1', '2026-09-14T08:00:00.000Z')];
+  await scan();
+  await resolve('A1', 'accept');
+  assert.equal(asset('A1').assignedAt, '2026-09-14');
+});
+
+test('a holder changed by hand is dated today unless a date is given', async () => {
+  await main.saveAsset({ payload: { asset: { ...asset('A1'), crewCode: 'CAT1', assigneeName: 'Cat' } }, context: {} });
+  assert.equal(asset('A1').assignedAt, new Date().toISOString().slice(0, 10));
+  await main.saveAsset({ payload: { asset: { ...asset('A1'), crewCode: 'DAN1', assigneeName: 'Dan', assignedAt: '2026-01-02' } }, context: {} });
+  assert.equal(asset('A1').assignedAt, '2026-01-02');
+  await main.saveAsset({ payload: { asset: { ...asset('A1'), notes: 'checked' } }, context: {} });
+  assert.equal(asset('A1').assignedAt, '2026-01-02', 'other edits leave the date alone');
+});
+
+test('the scan records each ticket with its crew code', async () => {
+  issues = [ticket('OPS-7', 'DEV100', 'BEN1')];
+  await scan();
+  assert.equal(store.get('asset-ticket:A1:OPS-7:primary').crewCode, 'BEN1');
+});
+
+test('the timeline lists tickets with their crew code, marks other holders, and sums up reporters', async () => {
+  issues = [ticket('OPS-9', 'DEV100', 'BEN1', '2026-10-03T00:00:00Z'), ticket('OPS-8', 'DEV100', 'BEN1', '2026-09-20T00:00:00Z'), ticket('OPS-2', 'DEV100', 'ANNA1', '2026-03-01T00:00:00Z')];
+  const t = await main.getDeviceTimeline({ payload: { assetId: 'A1' }, context: {} });
+  assert.deepEqual(t.events.filter((e) => e.kind === 'ticket').map((e) => [e.key, e.crewCode, e.otherHolder]), [['OPS-9', 'BEN1', true], ['OPS-8', 'BEN1', true], ['OPS-2', 'ANNA1', false]]);
+  assert.deepEqual(t.reporters.map((r) => [r.crewCode, r.count]), [['BEN1', 2], ['ANNA1', 1]]);
+  assert.deepEqual([t.latestRun.crewCode, t.latestRun.count, t.latestMatchesHolder], ['BEN1', 2, false]);
+});
+
+test('bulk review previews, then moves devices whose newest tickets all came from one other person', async () => {
+  store.set('asset:A2', { id: 'A2', name: 'DEV200', jiraIdentifier: 'DEV200', crewCode: 'ANNA1', assigneeName: 'Anna' });
+  store.set(`asset-name:${Buffer.from('dev200').toString('base64url')}`, { assetId: 'A2', name: 'DEV200' });
+  issues = [
+    ticket('OPS-9', 'DEV100', 'BEN1', '2026-10-03T00:00:00Z'), ticket('OPS-8', 'DEV100', 'BEN1', '2026-09-20T00:00:00Z'),
+    ticket('OPS-7', 'DEV200', 'BEN1', '2026-10-02T00:00:00Z'), ticket('OPS-6', 'DEV200', 'ANNA1', '2026-09-01T00:00:00Z'), ticket('OPS-5', 'DEV200', 'CAT1', '2026-08-01T00:00:00Z')
+  ];
+  await scan();
+  const preview = await bulkAll({ minTickets: 2 });
+  assert.deepEqual(preview.candidates.map((c) => [c.deviceName, c.proposedHolder, c.tickets]), [['DEV100', 'Ben', 2]], 'DEV200 has only one newest ticket from Ben');
+  assert.equal(asset('A1').crewCode, 'ANNA1', 'preview changes nothing');
+  const applied = await bulkAll({ minTickets: 2, apply: true });
+  assert.equal(applied.applied, 1);
+  assert.deepEqual([asset('A1').crewCode, asset('A1').assigneeName, asset('A1').assignedAt], ['BEN1', 'Ben', '2026-09-20']);
+  assert.ok(history('A1').some((h) => h.type === 'holder-bulk-accepted' && /last 2 tickets/.test(h.message)));
+  assert.equal((await conflicts()).conflicts.some((c) => c.assetId === 'A1'), false);
+});
+
+test('bulk review leaves kept conflicts and tickets older than the date alone', async () => {
+  issues = [ticket('OPS-9', 'DEV100', 'BEN1', '2026-10-03T00:00:00Z'), ticket('OPS-8', 'DEV100', 'BEN1', '2026-09-20T00:00:00Z')];
+  await scan();
+  assert.equal((await bulkAll({ minTickets: 2, since: '2026-10-04' })).candidates.length, 0);
+  await resolve('A1', 'keep');
+  assert.equal((await bulkAll({ minTickets: 1 })).candidates.length, 0);
+});

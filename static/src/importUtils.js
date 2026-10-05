@@ -13,6 +13,7 @@ const FIELD_MAP = {
   assigneeaccountid: 'assigneeAccountId', jiraaccountid: 'assigneeAccountId', holderaccountid: 'assigneeAccountId',
   client: 'client', customer: 'client', airline: 'client',
   status: 'status', location: 'location', base: 'location',
+  assigneddate: 'assignedAt', assignedon: 'assignedAt', assignedsince: 'assignedAt', dateassigned: 'assignedAt', assignedat: 'assignedAt',
   purchasedate: 'purchaseDate', purchase: 'purchaseDate',
   warrantyexpiry: 'warrantyExpiry', warranty: 'warrantyExpiry',
   notes: 'notes'
@@ -53,6 +54,7 @@ export const IMPORT_TARGETS = [
   { key: 'crewCode', label: 'Assignment Reference' },
   { key: 'assigneeName', label: 'Assigned Person / Holder' },
   { key: 'assigneeAccountId', label: 'Holder Jira Account ID' },
+  { key: 'assignedAt', label: 'Assigned Date' },
   { key: 'purchaseDate', label: 'Purchase Date' },
   { key: 'warrantyExpiry', label: 'Warranty Expiry' },
   { key: 'notes', label: 'Notes' }

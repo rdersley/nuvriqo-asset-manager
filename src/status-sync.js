@@ -111,7 +111,9 @@ async function applyReplacement(settings, fields, issueKey, change, replacement)
       device = { id, name: newId, jiraIdentifier: newId, type: oldDevice?.type || configuredType(settings, firstValue(fields[settings.jiraTypeField?.id])) || 'Other', notes: `Created from ${issueKey} as the replacement for ${existingIds[0] || 'an unrecorded device'}.`, createdAt: now(), curatedAt: now() };
       await kvs.set(nameIndexKey(newId), { assetId: id, name: newId, updatedAt: now() });
     }
-    const values = { ...takeOver(settings, fields, oldDevice), status: replacement.deviceStatus };
+    const holder = takeOver(settings, fields, oldDevice);
+    // The replacement is handed over when the HW ticket reaches this status: that is its assigned date.
+    const values = { ...holder, ...(holder.crewCode || holder.assigneeName ? { assignedAt: now().slice(0, 10) } : {}), status: replacement.deviceStatus };
     const changes = Object.entries(values).filter(([k, v]) => v && (device[k] || '') !== v).map(([field, to]) => ({ field, from: device[field] || '', to }));
     await kvs.set(`${ASSET_PREFIX}${device.id}`, { ...device, ...Object.fromEntries(Object.entries(values).filter(([, v]) => v)), updatedAt: now() });
     await addHistory(device.id, { type: created ? 'created' : 'updated', source: 'ticket-replacement', issueKey, message: `${created ? 'Created as' : 'Set as'} the replacement for ${existingIds[0] || 'an unrecorded device'} on ${issueKey}`, changes });

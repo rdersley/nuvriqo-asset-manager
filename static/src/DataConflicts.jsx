@@ -69,6 +69,7 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
         <p>Where Jira tickets and Asset Manager disagree. <strong>Holder conflicts</strong>: the latest ticket names a different holder; it may be a handover, someone reporting for a colleague, or a mistyped Device ID, so choose which holder is right. <strong>Device ID clean-up</strong>: values in the Device ID field that aren't Device IDs.</p>
       </div>
       {message && <div className="notice" role="status">{message}</div>}
+      <BulkHolderReview onOpenAsset={onOpenAsset} onDone={() => { load(); onChanged?.(); }} />
       {truncated && <div className="card report-warning">Showing the first 1,000 conflicts. Resolve some and refresh to see the rest.</div>}
       <div className="card fault-card">
         <div className="section-head">
@@ -101,5 +102,67 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
       </div>
       <DeviceIdCleanup />
     </main>
+  );
+}
+
+// Bulk holder review: moves devices whose recent tickets all came from one other person, so only
+// the unclear conflicts are left to decide one by one. Preview first; nothing changes until Apply.
+function BulkHolderReview({ onOpenAsset, onDone }) {
+  const [minTickets, setMinTickets] = useState(2);
+  const [since, setSince] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+
+  async function run(apply) {
+    setBusy(apply ? 'apply' : 'preview'); setMessage('');
+    let cursor = null, guard = 0, checked = 0, applied = 0;
+    const candidates = [];
+    try {
+      do {
+        const page = await invoke('bulkHolderConflicts', { minTickets, since, cursor, apply });
+        checked += page.checked || 0; applied += page.applied || 0; candidates.push(...(page.candidates || []));
+        cursor = page.nextCursor; guard += 1;
+        setMessage(`${apply ? 'Moving devices' : 'Checking conflicts'}… ${checked} checked, ${apply ? applied : candidates.length} ${apply ? 'moved' : 'would move'}`);
+      } while (cursor && guard < 500);
+      if (apply) { setPreview(null); setMessage(`${applied} device${applied === 1 ? '' : 's'} moved to the person on their recent tickets. Each has a history entry and an assigned-since date.`); onDone?.(); }
+      else { setPreview({ checked, candidates }); setMessage(''); }
+    } catch (e) {
+      setMessage(`${apply ? 'Stopped' : 'Preview stopped'}: ${e?.message || 'request failed'}.${apply ? ` ${applied} moved so far; preview again to see what is left.` : ''}`);
+    } finally { setBusy(''); }
+  }
+
+  function exportCsv() {
+    downloadCsv(`nuvriqo-bulk-holder-review-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Device', 'Device ID', 'Holder now', 'Assignment reference now', 'Would move to', 'Assignment reference', 'Tickets in a row', 'First of those', 'Latest', 'Tickets'],
+      preview.candidates.map((c) => [c.deviceName, c.deviceId, c.currentHolder, c.currentCrewCode, c.proposedHolder, c.proposedCrewCode, c.tickets, c.since, c.until, c.issueKeys.join(' ')]));
+  }
+
+  const working = Boolean(busy);
+  return (
+    <div className="card fault-card">
+      <div className="section-head"><div>
+        <h2>Bulk holder review</h2>
+        <p>Moves a device to the person on its tickets when its newest tickets in a row were all raised by that person, not its holder. Uses the tickets recorded by the last Jira scan; run the scan first. Conflicts someone chose to keep are left alone.</p>
+      </div></div>
+      <div className="actions" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+        <label>Newest tickets in a row, at least<input type="number" min="1" max="20" value={minTickets} disabled={working} onChange={(e) => { setMinTickets(Number(e.target.value) || 1); setPreview(null); }} style={{ width: 80 }} /></label>
+        <label>Latest ticket on or after (optional)<input type="date" value={since} disabled={working} onChange={(e) => { setSince(e.target.value); setPreview(null); }} /></label>
+        <button className="secondary" disabled={working} onClick={() => run(false)}>{busy === 'preview' ? 'Checking…' : 'Preview'}</button>
+        {preview && preview.candidates.length > 0 && <button className="primary" disabled={working} onClick={() => { if (window.confirm(`Move ${preview.candidates.length} device${preview.candidates.length === 1 ? '' : 's'} to the person on their recent tickets?`)) run(true); }}>{busy === 'apply' ? 'Moving…' : `Apply to ${preview.candidates.length}`}</button>}
+        {preview && preview.candidates.length > 0 && <button className="secondary" disabled={working} onClick={exportCsv}>Export preview</button>}
+      </div>
+      {message && <div className="notice" role="status" style={{ marginTop: 10 }}>{message}</div>}
+      {preview && <p style={{ marginTop: 10 }}>{preview.checked} open conflicts checked; <strong>{preview.candidates.length}</strong> would move. The rest stay in the list below to decide one by one.</p>}
+      {preview && preview.candidates.length > 0 && <div className="table-wrap"><table aria-label="Bulk holder review preview">
+        <thead><tr><th>Device</th><th>Holder now</th><th>Would move to</th><th>Evidence</th></tr></thead>
+        <tbody>{preview.candidates.slice(0, 100).map((c) => <tr key={c.assetId} style={{ cursor: 'default' }}>
+          <td><button className="issue-link" onClick={() => onOpenAsset?.(c.assetId)}><strong>{c.deviceName}</strong></button>{c.deviceId !== c.deviceName && <small style={{ display: 'block' }}>{c.deviceId}</small>}</td>
+          <td>{c.currentHolder || 'Unassigned'}</td>
+          <td>{c.proposedHolder}{c.proposedCrewCode !== c.proposedHolder && <small style={{ display: 'block' }}>{c.proposedCrewCode}</small>}</td>
+          <td>{c.tickets} tickets in a row, {formatDate(c.since)} – {formatDate(c.until)}<small style={{ display: 'block' }}>{c.issueKeys.join(', ')}</small></td>
+        </tr>)}</tbody>
+      </table>{preview.candidates.length > 100 && <small>Showing 100 of {preview.candidates.length}; export the preview for the full list.</small>}</div>}
+    </div>
   );
 }
