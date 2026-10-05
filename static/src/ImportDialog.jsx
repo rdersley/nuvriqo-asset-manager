@@ -7,7 +7,7 @@ const MAPPING_KEY = 'nuvriqo.assetImport.mapping';
 const loadRemembered = () => { try { const v = JSON.parse(localStorage.getItem(MAPPING_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
 const saveRemembered = (v) => { try { localStorage.setItem(MAPPING_KEY, JSON.stringify(v)); } catch { /* not available */ } };
 
-export default function ImportDialog({ existingAssets, onImport, onClose }) {
+export default function ImportDialog({ onImport, onClose }) {
   const [fileName, setFileName] = useState('');
   const [rows, setRows] = useState([]);
   const [customFields, setCustomFields] = useState([]);
@@ -83,7 +83,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
   async function checkRows(read, currentMapping) {
     setMappingChanged(false);
     const parsed = mapImportRows(read, currentMapping);
-    const checked = validateImportRows(parsed, existingAssets);
+    const checked = validateImportRows(parsed);
     let reconciled=checked;
     const valid=checked.filter((row)=>!row._error);
     if(valid.length){
@@ -139,7 +139,7 @@ export default function ImportDialog({ existingAssets, onImport, onClose }) {
         return i >= done ? [row] : [];
       }));
       const imported = (result.created || 0) + (result.updated || 0) + (result.merged || 0);
-      const parts = [`${imported} imported (${result.created || 0} created, ${result.updated || 0} updated, ${result.merged || 0} merged)`];
+      const parts = [`${imported} imported (${result.created || 0} created, ${result.updated || 0} updated, ${result.merged || 0} merged)${result.unchanged ? `, ${result.unchanged} already up to date` : ''}`];
       if (reasons.size) parts.push(`${reasons.size} could not be imported; the reason is shown in the Result column`);
       if (busy.length) parts.push(`${busy.length} were not imported because Jira was busy; press Import to try them again`);
       if (result.error) parts.push(`the import stopped after ${done} of ${total} rows (${result.error}). Press Import to continue with the remaining ${total - done}`);

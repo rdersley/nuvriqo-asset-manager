@@ -394,6 +394,16 @@ async function classifyImportRow(row,settings){
   if(byDevice?.id===existing.id)return{action:'update-device-id',message:'Update existing asset “'+existing.name+'” by Device ID.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
   return{action:'update-name',message:'Update existing asset “'+existing.name+'” by device name.',existing:{id:existing.id,name:existing.name,jiraIdentifier:existing.jiraIdentifier,serialNumber:existing.serialNumber},autoDiscovered:isJiraDiscoveredAsset(existing)};
 }
+// The fields of an import row that have a value; custom fields likewise.
+function filledImportFields(row){
+  const filled=Object.fromEntries(Object.entries(row||{}).filter(([k,v])=>k!=='customFields'&&v!==null&&v!==undefined&&String(v).trim()!==''));
+  const custom=Object.fromEntries(Object.entries(row?.customFields||{}).filter(([,v])=>v!==null&&v!==undefined&&String(v).trim()!==''));
+  return Object.keys(custom).length?{...filled,customFields:custom}:filled;
+}
+function importRowUnchanged(row,existing){
+  const same=(a,b)=>String(a??'').trim()===String(b??'').trim();
+  return Object.entries(row).every(([k,v])=>k==='customFields'?Object.entries(v).every(([ck,cv])=>same(cv,existing.customFields?.[ck])):same(v,existing[k]));
+}
 // Import rows processed in parallel per call (each row is several storage calls).
 const IMPORT_CONCURRENCY=8;
 resolver.define('previewAssetImportReconciliation',async({payload})=>{
@@ -408,7 +418,7 @@ resolver.define('previewAssetImportReconciliation',async({payload})=>{
 resolver.define('reconcileAssetImport',async({payload})=>{
   const settings=await getSettingsValue();const types=typeCatalog(settings);
   const rows=safeArray(payload?.assets).slice(0,100).map(row=>row?.type?{...row,type:canonicalType(types,row.type)}:row);
-  let created=0,updated=0,merged=0;const failed=[];
+  let created=0,updated=0,merged=0,unchanged=0;const failed=[];
   // Rows run IMPORT_CONCURRENCY at a time. Rows that resolve to the same existing device, or create the
   // same Device Name, share a lock so they are applied one after another.
   const locks=new Map();
@@ -424,6 +434,11 @@ resolver.define('reconcileAssetImport',async({payload})=>{
       if(shared&&!match.existing?.id){const again=await classifyImportRow(row,settings);if(again.action==='review')throw new Error(again.message);Object.assign(match,again);}
       const existing=match.existing?.id?await kvs.get(ASSET_PREFIX+match.existing.id):null;
       if(!existing){await saveOneAsset(row,'import',{existing:null});return 'created';}
+      // Updating a device: empty cells leave its values alone, and a row that changes nothing
+      // is not written (re-importing a whole register then costs reads only).
+      row=filledImportFields(row);
+      if(row.customFields)row={...row,customFields:{...(existing.customFields||{}),...row.customFields}};
+      if(match.action!=='merge-serial'&&importRowUnchanged(row,existing))return 'unchanged';
       const oldName=existing.name||'';const oldIdentifier=existing.jiraIdentifier||existing.name||'';
       const aliases=[...new Set([...safeArray(existing.jiraAliases),oldIdentifier].map(reconciliationValue).filter(Boolean).filter(v=>normaliseName(v)!==normaliseName(row.jiraIdentifier||row.name||'')))];
       const saved=await saveOneAsset({...row,id:existing.id},'import-reconcile',{existing,extra:{jiraAliases:aliases,notes:clean(row.notes)||existing.notes||''}});
@@ -436,11 +451,11 @@ resolver.define('reconcileAssetImport',async({payload})=>{
     });
   };
   let next=0;
-  const worker=async()=>{while(next<rows.length){const i=next++;const row=rows[i]||{};try{const outcome=await importRow(row);if(outcome==='created')created+=1;else if(outcome==='merged')merged+=1;else updated+=1;}catch(error){failed.push({index:i,name:row?.name||'',error:error?.message||'Import reconciliation failed.'});}}};
+  const worker=async()=>{while(next<rows.length){const i=next++;const row=rows[i]||{};try{const outcome=await importRow(row);if(outcome==='created')created+=1;else if(outcome==='merged')merged+=1;else if(outcome==='unchanged')unchanged+=1;else updated+=1;}catch(error){failed.push({index:i,name:row?.name||'',error:error?.message||'Import reconciliation failed.'});}}};
   await Promise.all(Array.from({length:Math.min(IMPORT_CONCURRENCY,rows.length)},worker));
   failed.sort((a,b)=>a.index-b.index);
   const deviceTypesAdded=await addNewAssetTypes(types);
-  return{processed:rows.length,created,updated,merged,failed,deviceTypesAdded};
+  return{processed:rows.length,created,updated,merged,unchanged,failed,deviceTypesAdded};
 });
 
 function holderOf(asset){return clean(asset?.assigneeName)||clean(asset?.crewCode)||'';}

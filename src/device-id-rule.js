@@ -16,8 +16,10 @@ function toRegExp(pattern) {
   return new RegExp(`^${[...pattern].map((c) => (c === '#' ? '\\d' : c === '@' ? '[a-z]' : c === '?' ? '.' : c === '*' ? '.*' : c.replace(/[.+^${}()|[\]\\]/g, '\\$&'))).join('')}$`, 'i');
 }
 
-// assetTypes: the configured list. "Type: pattern" only counts as typed when Type is on it,
-// so a pattern that itself contains a colon still works.
+// assetTypes: the configured list. "Type: pattern" is that type's format, spelled as on the list.
+// A type not on the list yet still counts when a space follows the colon ("vPOS: RYRS######") and
+// the name has no pattern symbols; it is marked unlisted so the settings page can say to add it.
+// "AB:##" (no space) with AB not on the list stays one pattern, colon included.
 export function compileDeviceIdPatterns(patterns = [], assetTypes = []) {
   const types = new Map((Array.isArray(assetTypes) ? assetTypes : []).map((t) => [norm(t), String(t).trim()]));
   return (Array.isArray(patterns) ? patterns : [])
@@ -25,9 +27,12 @@ export function compileDeviceIdPatterns(patterns = [], assetTypes = []) {
     .filter(Boolean)
     .map((line) => {
       const at = line.indexOf(':');
-      const type = at > 0 ? types.get(norm(line.slice(0, at))) : undefined;
+      const prefix = at > 0 ? line.slice(0, at).trim() : '';
+      const listed = prefix ? types.get(norm(prefix)) : undefined;
+      const unlisted = !listed && /^[^#@?*]{1,60}$/.test(prefix) && /^\s/.test(line.slice(at + 1)) ? prefix : undefined;
+      const type = listed || unlisted;
       const pattern = type ? line.slice(at + 1).trim() : line;
-      return pattern ? { type: type || null, pattern, re: toRegExp(pattern) } : null;
+      return pattern ? { type: type || null, pattern, re: toRegExp(pattern), ...(unlisted ? { unlisted: true } : {}) } : null;
     })
     .filter(Boolean);
 }

@@ -74,3 +74,23 @@ test('the import preview classifies rows in parallel and keeps their order', asy
   // One row after another: 50 rows x 3+ lookups x 5 ms = 750 ms or more.
   assert.ok(elapsed < 300, `took ${elapsed} ms`);
 });
+
+test('a row matching by Device Name updates that device; empty cells leave its values alone', async () => {
+  await reconcile([{ name: 'GALAXY-1', serialNumber: '3.51633E+14', location: 'DUB', crewCode: 'C1', customFields: { imei: 'x', colour: 'black' } }]);
+  const result = await reconcile([{ name: 'galaxy-1', serialNumber: '351633123456789', location: '', crewCode: '', customFields: { imei: '351633123456789', colour: '' } }]);
+  assert.equal(result.updated, 1);
+  const [only] = assets();
+  assert.equal(assets().length, 1);
+  assert.deepEqual([only.serialNumber, only.location, only.crewCode], ['351633123456789', 'DUB', 'C1']);
+  assert.deepEqual(only.customFields, { imei: '351633123456789', colour: 'black' });
+});
+
+test('a row that changes nothing is not written', async () => {
+  await reconcile([{ name: 'SAME-1', jiraIdentifier: 'SAME-1', location: 'DUB' }]);
+  const before = structuredClone(assets()[0]);
+  const historyBefore = [...store.keys()].filter((k) => k.startsWith('asset-history:')).length;
+  const result = await reconcile([{ name: 'SAME-1', jiraIdentifier: 'SAME-1', location: 'DUB', client: '' }]);
+  assert.deepEqual([result.unchanged, result.updated], [1, 0]);
+  assert.deepEqual(assets()[0], before);
+  assert.equal([...store.keys()].filter((k) => k.startsWith('asset-history:')).length, historyBefore);
+});

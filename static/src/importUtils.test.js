@@ -17,12 +17,12 @@ test('rejects duplicate Device Names in the same file ignoring case and spacing'
   assert.equal(rows[1]._error, 'Duplicate Device Name in this file.');
 });
 
-test('rejects a new row whose Device Name already exists', () => {
+test('a row whose Device Name already exists is kept, to update that device', () => {
   const [row] = validateImportRows(
     [{ name: 'DESKTOP-01' }],
     [{ id: 'AST-1', name: 'desktop-01' }]
   );
-  assert.equal(row._error, 'Device Name already exists.');
+  assert.equal(row._error, '');
 });
 
 test('allows an import row with an asset id to be treated as an update candidate', () => {

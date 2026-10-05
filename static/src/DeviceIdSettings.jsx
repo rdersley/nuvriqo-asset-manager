@@ -12,10 +12,12 @@ export function DeviceIdFormat({ value, onChange, disabled, assetTypes = [] }) {
     return compiled ? checkDeviceId(sample, compiled) : { ok: false, reason: 'The format could not be read' };
   }, [sample, compiled]);
   const typed = (compiled || []).filter((c) => c.type);
+  const unlisted = [...new Set((compiled || []).filter((c) => c.unlisted).map((c) => c.type))];
   return (
     <label className="wide">Device ID format
       <textarea rows="3" value={value} disabled={disabled} placeholder={'Tablet: TAB####\nvPOS: VPOS-*\nDEV####'} onChange={(e) => onChange(e.target.value)} />
       <small>One pattern per line. <code>#</code> = digit, <code>@</code> = letter, <code>?</code> = any one character, <code>*</code> = anything; other characters must match exactly (capitals don't matter). Start a line with a device type from Asset types to make it that type's format (<code>Tablet: TAB####</code>): a new device found by the scan gets the type its Device ID matches. Lines without a type apply to every type. The Jira scan only creates devices from values that match one of the patterns; everything else goes to Device ID clean-up in Data conflicts. Leave empty to accept any value with letters in it.{typed.length ? ` Formats by type: ${[...new Set(typed.map((c) => c.type))].join(', ')}.` : ''}</small>
+      {unlisted.length > 0 && <small style={{ fontWeight: 600 }}>Not in Asset types yet: {unlisted.join(', ')}. Add {unlisted.length === 1 ? 'it' : 'them'} to Asset types so devices get that type.</small>}
       <span style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
         <input aria-label="Try a value" placeholder="Try a value" value={sample} onChange={(e) => setSample(e.target.value)} style={{ maxWidth: 220 }} />
         {sample.trim() && <small>{result?.ok ? `✓ Counts as a Device ID${result.type ? ` (${result.type})` : ''}` : `✗ ${result?.reason || 'Empty'}`}</small>}
