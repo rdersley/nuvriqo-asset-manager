@@ -24,6 +24,8 @@ modules:
           route: crew-tracking
         - title: Device Usage Reconciliation
           route: device-usage
+        - title: SOTI Sync
+          route: soti
 
   jira:issuePanel:
     - key: nuvriqo-asset-issue-panel
@@ -96,10 +98,15 @@ modules:
     - key: portal-plus-snapshot
       function: portal-plus-refresh
       interval: hour
+    - key: soti-device-sync
+      function: soti-sync
+      interval: hour
 
   function:
     - key: resolver
       handler: index.handler
+    - key: soti-sync
+      handler: soti.scheduled
     - key: ticket-sync
       handler: ticket-sync.handler
     - key: issue-panel
@@ -141,6 +148,12 @@ permissions:
     - read:application-role:jira
     - read:group:jira
     - read:organization:jira-service-management
+  # Read-only SOTI MobiControl sync (SOTI ONE, SOTI-hosted servers only).
+  external:
+    fetch:
+      backend:
+        - '*.mobicontrol.cloud'
+        - '*.mobicontrolcloud.com'
 
 app:
   runtime:
