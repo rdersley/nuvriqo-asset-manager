@@ -5,7 +5,7 @@ import fs from 'node:fs';
 let permissionResponse = { ok: true, body: { permissions: { ADMINISTER: { havePermission: false } } } };
 const requests = [];
 mock.module('@forge/api', {
-  defaultExport: { asUser: () => ({ requestJira: async (path) => { requests.push(String(path)); return { ok: permissionResponse.ok, json: async () => permissionResponse.body }; } }) },
+  defaultExport: { asUser: () => ({ requestJira: async (path) => { requests.push(String(path)); return { ok: permissionResponse.ok, status: permissionResponse.status, json: async () => permissionResponse.body }; } }) },
   namedExports: { route: (strings, ...values) => strings.reduce((out, s, i) => out + s + (values[i] ?? ''), '') }
 });
 const { guardResolver, isJiraAdmin } = await import('../src/auth.js');
@@ -58,4 +58,21 @@ test('backends register the expected admin guards', () => {
   for (const key of ['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getDataConflicts', 'resolveDataConflict']) assert.match(backend, new RegExp(`ADMIN_RESOLVERS = new Set\\(\\[[^\\]]*'${key}'`));
   assert.match(backend, /guardResolver\(licensedResolver\(new Resolver\(\)\), ADMIN_RESOLVERS\)/);
   assert.match(crew, /guardResolver\(new Resolver\(\), 'all'\)/);
+});
+
+test('a busy Jira is asked again; if it stays busy the error says so instead of "not an administrator"', async () => {
+  const { ADMIN_CHECK_RETRY } = await import('../src/auth.js');
+  const saved = ADMIN_CHECK_RETRY.delays; ADMIN_CHECK_RETRY.delays = [0, 0];
+  try {
+    const resolver = guardResolver(fakeResolver(), 'all');
+    resolver.define('bulkRemoveAssets', async () => 'removed');
+    let calls = 0;
+    const answers = [{ ok: false, status: 429, body: {} }, { ok: true, body: { permissions: { ADMINISTER: { havePermission: true } } } }];
+    permissionResponse = { get ok() { return answers[Math.min(calls++, 1)].ok; }, get status() { return answers[Math.min(calls - 1, 1)].status; }, get body() { return answers[Math.min(calls - 1, 1)].body; } };
+    assert.equal(await resolver.defs.bulkRemoveAssets({ payload: {} }), 'removed');
+    permissionResponse = { ok: false, status: 503, body: {} };
+    await assert.rejects(resolver.defs.bulkRemoveAssets({ payload: {} }), /Jira is busy and couldn't confirm/);
+    permissionResponse = { ok: false, status: 403, body: {} };
+    await assert.rejects(resolver.defs.bulkRemoveAssets({ payload: {} }), /Only Jira administrators/);
+  } finally { ADMIN_CHECK_RETRY.delays = saved; }
 });
