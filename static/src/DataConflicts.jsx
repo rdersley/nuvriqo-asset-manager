@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { router } from '@forge/bridge';
 import { invoke } from './invoke.js';
 import { downloadCsv } from '../../shared/csv.js';
+import DeviceIdCleanup from './DeviceIdCleanup';
 
 const formatDate = (v) => (v ? new Date(v).toLocaleDateString() : '—');
 
@@ -60,12 +61,12 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
       <div className="toolbar">
         <button className="secondary" onClick={onBack}>← Overview</button>
         <button className="secondary" onClick={load} disabled={loading}>Refresh</button>
-        <button className="primary" onClick={exportCsv} disabled={!conflicts.length}>Export CSV</button>
+        <button className="primary" onClick={exportCsv} disabled={!conflicts.length}>Export holder conflicts</button>
       </div>
       <div className="page-title">
         <span className="brand">NUVRIQO</span>
         <h1>Data conflicts</h1>
-        <p>Devices where the latest Jira ticket names a different holder than Asset Manager. The Jira scan no longer reassigns these automatically: the ticket may be a handover, someone reporting for a colleague, or a mistyped Device ID. Choose which holder is right.</p>
+        <p>Where Jira tickets and Asset Manager disagree. <strong>Holder conflicts</strong>: the latest ticket names a different holder; it may be a handover, someone reporting for a colleague, or a mistyped Device ID, so choose which holder is right. <strong>Device ID clean-up</strong>: values in the Device ID field that aren't Device IDs.</p>
       </div>
       {message && <div className="notice" role="status">{message}</div>}
       {truncated && <div className="card report-warning">Showing the first 1,000 conflicts. Resolve some and refresh to see the rest.</div>}
@@ -98,6 +99,7 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
           </table>
         </div>
       </div>
+      <DeviceIdCleanup />
     </main>
   );
 }

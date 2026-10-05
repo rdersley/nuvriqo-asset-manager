@@ -6,10 +6,11 @@ import { guardResolver } from './auth.js';
 import { normaliseReplacementSettings, normaliseStatusRules, STATUS_AUTOMATION_LOG_KEY } from './status-automation.js';
 import { licensedResolver } from './licence.js';
 import { trackActor, actorFields } from './actor.js';
+import { checkDeviceId, compileDeviceIdPatterns } from './device-id-rule.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
-const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict', 'tidyAssetTypes']);
+const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict', 'tidyAssetTypes', 'previewJiraScan', 'getDeviceIdReview', 'resolveDeviceIdValue']);
 const resolver = trackActor(guardResolver(licensedResolver(new Resolver()), ADMIN_RESOLVERS));
 const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
@@ -34,6 +35,8 @@ const HISTORY_PREFIX = 'asset-history:';
 const FAULT_HISTORY_PREFIX = 'fault-history:';
 // One record per device whose Jira tickets name a different holder than Asset Manager.
 const HOLDER_CONFLICT_PREFIX = 'holder-conflict:';
+// One record per value in the Jira Device ID field that is not a real Device ID, for clean-up.
+const DEVICE_ID_REVIEW_PREFIX = 'device-id-review:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SYNC_KEY = 'sync:asset-manager:jira-field';
 const SYNC_PROGRESS_KEY = 'sync-progress:asset-manager:jira-field';
@@ -185,7 +188,30 @@ function issueMatchesRelatedIdentifier(issue, fieldId, identifier){if(!fieldId||
 function latestIssueValueForIdentifier(issues,identifierFieldId,identifier,valueFieldId){if(!valueFieldId||!validIdentifier(identifier))return{value:'',issue:null};for(const issue of issues){if(!issueMatchesIdentifier(issue,identifierFieldId,identifier))continue;const value=fieldValues(issue.fields?.[valueFieldId])[0]||'';if(value)return{value,issue};}return{value:'',issue:null};}
 function latestFieldValueForIdentifier(issues, identifierFieldId, identifier, valueFieldId){if(!valueFieldId||!validIdentifier(identifier))return'';for(const issue of issues){if(!issueMatchesIdentifier(issue,identifierFieldId,identifier))continue;const value=fieldValues(issue.fields?.[valueFieldId])[0]||'';if(value)return value;}return'';}
 function mappedCrewPerson(settings,crewCode){const target=normaliseName(crewCode);return safeArray(settings.crewMappings).find(m=>normaliseName(m.crewCode)===target)||null;}
-function discoveredIdentifiersFromIssues(issues,fieldId){const discovered=new Map();let ignored=0;for(const issue of issues)for(const identifier of fieldValues(issue.fields?.[fieldId])){if(!validIdentifier(identifier)){ignored+=1;continue;}const normalized=normaliseName(identifier);if(!discovered.has(normalized))discovered.set(normalized,identifier);}return{identifiers:[...discovered.values()],ignored};}
+// Values in the Device ID field: real Device IDs (by the basic checks and the configured format)
+// become devices; the rest are returned as `rejected`, with their tickets, for the clean-up report.
+function discoveredIdentifiersFromIssues(issues,fieldId,patterns=[]){
+  const compiled=compileDeviceIdPatterns(patterns);const discovered=new Map(),rejected=new Map();let ignored=0;
+  for(const issue of issues)for(const identifier of fieldValues(issue.fields?.[fieldId])){
+    const check=checkDeviceId(identifier,compiled);if(!check)continue;
+    const normalized=normaliseName(identifier);
+    if(!check.ok){ignored+=1;const entry=rejected.get(normalized)||{value:clean(identifier),reason:check.reason,issueKeys:new Set()};if(issue.key)entry.issueKeys.add(issue.key);rejected.set(normalized,entry);continue;}
+    if(!discovered.has(normalized))discovered.set(normalized,identifier);
+  }
+  return{identifiers:[...discovered.values()],ignored,rejected};
+}
+const deviceIdReviewKey=(value)=>`${DEVICE_ID_REVIEW_PREFIX}${Buffer.from(normaliseName(value),'utf8').toString('base64url')}`;
+// Adds one page's rejected values to their review records. Counts restart with each scan run, so a
+// record shows how many tickets carry the value now. Ignored values stay ignored; a value that was
+// fixed but turns up again is reopened.
+async function recordRejectedDeviceIds(rejected,runId){
+  await Promise.all([...rejected.values()].map(async(entry)=>{
+    const key=deviceIdReviewKey(entry.value);const existing=await kvs.get(key);const sameRun=existing?.runId===runId;
+    const sample=[...new Set([...(sameRun?safeArray(existing.issueKeys):[]),...entry.issueKeys])].slice(0,10);
+    const status=existing?.status==='ignored'?'ignored':'open';
+    await kvs.set(key,{...(existing||{}),value:existing?.value||entry.value,reason:entry.reason,runId,ticketCount:(sameRun?Number(existing.ticketCount||0):0)+entry.issueKeys.size,issueKeys:sample,status,firstSeen:existing?.firstSeen||now(),lastSeen:now()});
+  }));
+}
 async function findAssetForJiraIdentifier(fieldId,identifier){const deterministicId=makeJiraAssetId(fieldId,identifier);let asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(asset)return asset;const indexed=await kvs.get(nameIndexKey(identifier));if(indexed?.assetId)asset=await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);return asset||null;}
 async function recordScannedTicketsForAsset(asset,issues,field,settings,runId){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;const client=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraClientField?.id);if(client&&asset.jiraClientSyncRunId!==runId)asset=await saveOneAsset({...asset,client,jiraClientSyncRunId:runId},'jira-sync');for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});}}
 async function syncAssetsFromJira({restart=false}={}){
@@ -200,7 +226,7 @@ async function syncAssetsFromJira({restart=false}={}){
   const{field,issues,settings}=page;
   if(!field){const result={timestamp:now(),field:null,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);return result;}
   if(!progress||progress.fieldId!==field.id){progress={fieldId:field.id,projectKey:settings.jiraProjectKey||'',runId:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,nextPageToken:null,issuesScanned:0,discovered:0,created:0,matched:0,ignored:0,reconciled:0,startedAt:now()};if(page.nextPageToken===null&&issues.length===0){const result={timestamp:now(),field,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);return result;}}
-  const{identifiers,ignored}=discoveredIdentifiersFromIssues(issues,field.id);const types=typeCatalog(settings);
+  const{identifiers,ignored,rejected}=discoveredIdentifiersFromIssues(issues,field.id,settings.deviceIdPatterns);await recordRejectedDeviceIds(rejected,progress.runId);const types=typeCatalog(settings);
   let batchCreated=0,batchMatched=0,batchDiscovered=0,batchConflicts=0;
   for(const identifier of identifiers){
     let asset=await findAssetForJiraIdentifier(field.id,identifier);
@@ -250,6 +276,20 @@ resolver.define('countAssetsPage',async({payload})=>{
   const byType={};
   for(const a of items){const key=clean(a?.type||'Other')||'Other';byType[key]=(byType[key]||0)+1;}
   return{count:items.length,nextCursor:page.nextCursor||null,inUse:items.filter(a=>['In Use','Assigned','Active'].includes(a?.status)).length,available:items.filter(a=>a?.status==='Available').length,repair:items.filter(a=>['Repair','In Repair'].includes(a?.status)).length,byType};
+});
+// One page of a read-only Jira scan: which Device IDs are already devices, which a real scan would
+// add, and which values it would reject. Devices are not touched; rejected values are recorded for
+// the clean-up report. The UI passes runId and nextPageToken back until nextPageToken is empty.
+resolver.define('previewJiraScan',async({payload})=>{
+  const page=await searchIssuePageWithConfiguredAssetField({nextPageToken:clean(payload?.nextPageToken||'')||null});
+  if(!page.field)throw new Error('Map the Jira Device ID field in Configuration before previewing a scan.');
+  const runId=clean(payload?.runId||'')||`preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+  const{identifiers,rejected}=discoveredIdentifiersFromIssues(page.issues,page.field.id,page.settings.deviceIdPatterns);
+  await recordRejectedDeviceIds(rejected,runId);
+  const registered=await Promise.all(identifiers.map(id=>findAssetForJiraIdentifier(page.field.id,id)));
+  return{runId,issuesScanned:page.issues.length,nextPageToken:page.nextPageToken,
+    found:identifiers.map((identifier,i)=>({identifier,registered:Boolean(registered[i])})),
+    rejected:[...rejected.values()].map(e=>({value:e.value,reason:e.reason,tickets:e.issueKeys.size}))};
 });
 resolver.define('syncAssetsFromJira',async({payload})=>syncAssetsFromJira({restart:Boolean(payload?.restart)}));
 resolver.define('getStatusAutomationLog',async()=>(await kvs.get(STATUS_AUTOMATION_LOG_KEY))||[]);
@@ -477,6 +517,91 @@ resolver.define('getOpenFaultCount',async()=>{
   try{const response=await api.asUser().requestJira(route`/rest/api/3/search/approximate-count`,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({jql})});if(!response.ok)return{count:null,configured:true};const body=await response.json();return{count:Number.isFinite(body?.count)?body.count:null,configured:true};}
   catch{return{count:null,configured:true};}
 });
+// The clean-up list: values in the Device ID field that are not Device IDs, each with a suggested
+// device when the value is a registered device's serial number, name, old ID, or contains its ID.
+const REVIEW_ASSET_PAGES=100;
+async function deviceLookup(){
+  const byId=new Map(),bySerial=new Map();let cursor=null,pages=0;
+  do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();pages+=1;cursor=page.nextCursor||null;
+    for(const {value:a} of safeArray(page.results)){if(!a?.id)continue;
+      for(const v of [a.jiraIdentifier,a.name,...safeArray(a.jiraAliases)])if(clean(v)&&!byId.has(normaliseName(v)))byId.set(normaliseName(v),a);
+      if(clean(a.serialNumber)&&!bySerial.has(normaliseName(a.serialNumber)))bySerial.set(normaliseName(a.serialNumber),a);}
+  }while(cursor&&pages<REVIEW_ASSET_PAGES);
+  return{byId,bySerial,partial:Boolean(cursor)};
+}
+function suggestDevice(value,lookup){
+  const key=normaliseName(value);const pick=(a,matchedBy)=>({assetId:a.id,deviceId:a.jiraIdentifier||a.name,name:a.name,matchedBy});
+  if(lookup.bySerial.has(key))return pick(lookup.bySerial.get(key),'serial number');
+  if(lookup.byId.has(key))return pick(lookup.byId.get(key),'device name or earlier ID');
+  for(const token of String(value).split(/[\s,;/|]+/).map(normaliseName).filter(t=>t.length>=4)){
+    if(lookup.byId.has(token))return pick(lookup.byId.get(token),'Device ID inside the value');
+    if(lookup.bySerial.has(token))return pick(lookup.bySerial.get(token),'serial number inside the value');
+  }
+  return null;
+}
+resolver.define('getDeviceIdReview',async()=>{
+  const records=await queryAllByPrefix(DEVICE_ID_REVIEW_PREFIX,1000);
+  const open=records.filter(r=>r.status==='open');const lookup=await deviceLookup();
+  const values=open.map(r=>({...r,suggestion:suggestDevice(r.value,lookup)})).sort((a,b)=>Number(b.ticketCount||0)-Number(a.ticketCount||0)||String(a.value).localeCompare(String(b.value)));
+  return{values,ignored:records.filter(r=>r.status==='ignored').length,fixed:records.filter(r=>r.status==='fixed'||r.status==='cleared').length,suggestionsPartial:lookup.partial,truncated:records.length>=1000};
+});
+// JQL finding tickets whose Device ID field holds this exact value (filtered exactly afterwards).
+function exactValueClause(field,value){
+  const cf=`cf[${String(field.id).replace('customfield_','')}]`;const custom=String(field.customType||'');
+  if(field.schemaType==='string'||/:(textfield|textarea)$/.test(custom))return `${cf} ~ ${jqlString(`"${value}"`)}`;
+  if(field.schemaType==='option'||field.schemaType==='array'||/:(select|radiobuttons|multiselect|multicheckboxes|labels)$/.test(custom))return `${cf} = ${jqlString(value)}`;
+  return null;
+}
+// The field's new content: the bad value replaced by (or, when replacement is null, removed in favour
+// of) the right one. Multi-value fields keep their other values.
+function replacedFieldValue(field,current,bad,replacement){
+  const isBad=(v)=>normaliseName(typeof v==='object'&&v!==null?(v.value??v.name??''):v)===normaliseName(bad);
+  if(Array.isArray(current)){const kept=current.filter(v=>!isBad(v)).map(v=>typeof v==='object'&&v!==null?{value:v.value??v.name}:v);const next=replacement?[...kept,current.some(v=>typeof v==='object'&&v!==null)?{value:replacement}:replacement]:kept;return next.length?next:null;}
+  if(!replacement)return null;
+  if(field.schemaType==='option'||/:(select|radiobuttons)$/.test(String(field.customType||'')))return{value:replacement};
+  return replacement;
+}
+const DEVICE_ID_FIX_BATCH=50;
+// Fixes (writes the right Device ID), clears, ignores or reopens one value. Fix and clear work on up
+// to 50 tickets per call; the UI calls again while `remaining` is true.
+resolver.define('resolveDeviceIdValue',async({payload,context})=>{
+  const value=clean(payload?.value||'');const action=payload?.action;
+  if(!value||!['fix','clear','ignore','reopen'].includes(action))throw new Error('Choose a value and what to do with it.');
+  const key=deviceIdReviewKey(value);const record=await kvs.get(key);if(!record)throw new Error('This value is no longer on the list. Refresh it.');
+  const by=clean(context?.accountId||'');
+  if(action==='ignore'||action==='reopen'){await kvs.set(key,{...record,status:action==='ignore'?'ignored':'open',resolvedBy:by,resolvedAt:now()});return{ok:true};}
+  const settings=await getSettingsValue();const fields=await getJiraCustomFields();const field=await resolveJiraAssetField(fields);
+  if(!field)throw new Error('Map the Jira Device ID field in Configuration first.');
+  let device=null,replacement=null;
+  if(action==='fix'){
+    device=await findAssetForJiraIdentifier(field.id,clean(payload?.deviceId||''));
+    if(!device)throw new Error(`“${clean(payload?.deviceId||'')}” is not a device in Asset Manager. Choose a registered device.`);
+    replacement=device.jiraIdentifier||device.name;
+    const check=checkDeviceId(replacement,compileDeviceIdPatterns(settings.deviceIdPatterns));
+    if(!check?.ok)throw new Error(`${replacement} does not pass the Device ID format rule (${check?.reason||'empty'}).`);
+  }
+  const clause=exactValueClause(field,value);
+  if(!clause)throw new Error(`The ${field.name} field type cannot be searched, so these tickets need fixing in Jira: ${safeArray(record.issueKeys).join(', ')}.`);
+  const jql=`${projectScope(settings)}${clause} ORDER BY created DESC`;
+  const response=await api.asUser().requestJira(route`/rest/api/3/search/jql`,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({jql,fields:[field.id],maxResults:100})});
+  if(!response.ok)throw new Error(`Jira could not search for this value (${response.status}). Fix these tickets in Jira: ${safeArray(record.issueKeys).join(', ')}.`);
+  const data=await response.json();
+  const matching=safeArray(data.issues).filter(issue=>fieldValues(issue.fields?.[field.id]).some(v=>normaliseName(v)===normaliseName(value)));
+  // Jira's text search skips some words ("N/A", very short values), so it can miss tickets the scan saw.
+  if(!matching.length)return{updated:[],failed:[],remaining:false,done:false,notFound:true,issueKeys:safeArray(record.issueKeys)};
+  const batch=matching.slice(0,DEVICE_ID_FIX_BATCH);const updated=[],failed=[];
+  for(const issue of batch){
+    const next=replacedFieldValue(field,issue.fields?.[field.id],value,replacement);
+    try{const put=await api.asUser().requestJira(route`/rest/api/3/issue/${issue.key}`,{method:'PUT',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({fields:{[field.id]:next}})});
+      if(put.ok)updated.push(issue.key);else{let detail='';try{detail=JSON.stringify(await put.json()).slice(0,200);}catch{}failed.push({key:issue.key,error:`Jira returned ${put.status}${detail?`: ${detail}`:''}`});}}
+    catch(error){failed.push({key:issue.key,error:error?.message||'Update failed'});}
+  }
+  const remaining=matching.length>batch.length||Boolean(data.nextPageToken);
+  if(device&&updated.length)await addHistory(device.id,{type:'device-id-fix',source:'device-id-cleanup',message:`Device ID set to ${replacement} on ${updated.join(', ')} (was “${value}”)`,issueKeys:updated});
+  const done=!remaining&&!failed.length;
+  await kvs.set(key,{...record,...(done?{status:action==='fix'?'fixed':'cleared',fixedTo:replacement||'',ticketCount:0}:{}),resolvedBy:by,resolvedAt:now()});
+  return{updated,failed,remaining,done,notFound:false};
+});
 // Display names for account ids, in one Jira call per 100 people. Missing names are left out;
 // the history still shows the change.
 async function jiraUserNames(accountIds){
@@ -490,7 +615,7 @@ async function jiraUserNames(accountIds){
 resolver.define('getAssetHistory',async({payload})=>{if(!payload?.assetId)return[];const history=await queryAllByPrefix(`${HISTORY_PREFIX}${payload.assetId}:`,1000);const names=await jiraUserNames(history.map(h=>h.changedBy||h.resolvedBy));return history.map(h=>{const by=h.changedBy||h.resolvedBy;return by&&names.get(by)?{...h,changedByName:names.get(by)}:h;}).sort((a,b)=>String(b.timestamp).localeCompare(String(a.timestamp)));});
 resolver.define('getFaultHistory',async({payload})=>{if(!payload?.assetId)return[];const settings=await getSettingsValue();const history=await queryAllByPrefix(`${FAULT_HISTORY_PREFIX}${payload.assetId}:`,1000);return history.filter(item=>ticketMatchesConfiguredProject(item,settings)).sort((a,b)=>String(b.issueCreated||b.firstSeen||'').localeCompare(String(a.issueCreated||a.firstSeen||'')));});
 resolver.define('getSettings',async()=>getSettingsValue());
-resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};const previousSettings=await getSettingsValue();const normaliseField=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;const settings={assetTypes:safeArray(incoming.assetTypes).map(clean).filter(Boolean),statuses:safeArray(incoming.statuses).map(clean).filter(Boolean),locations:safeArray(incoming.locations).map(clean).filter(Boolean),customFields:safeArray(incoming.customFields).map(f=>({key:clean(f.key),label:clean(f.label),type:clean(f.type||'text')})).filter(f=>f.key&&f.label),jiraAssetField:normaliseField(incoming.jiraAssetField),jiraRelatedAssetField:normaliseField(incoming.jiraRelatedAssetField),jiraLocationField:normaliseField(incoming.jiraLocationField),jiraTypeField:normaliseField(incoming.jiraTypeField),jiraCrewCodeField:normaliseField(incoming.jiraCrewCodeField),jiraClientField:normaliseField(incoming.jiraClientField),jiraProjectKey:clean(incoming.jiraProjectKey||''),jiraFaultField:normaliseField(incoming.jiraFaultField),crewMappings:safeArray(incoming.crewMappings).map(m=>({crewCode:clean(m.crewCode),accountId:clean(m.accountId),displayName:clean(m.displayName)})).filter(m=>m.crewCode&&(m.displayName||m.accountId)),jiraDiscoveryEnabled:incoming.jiraDiscoveryEnabled!==false};if(!settings.assetTypes.length)settings.assetTypes=DEFAULT_SETTINGS.assetTypes;if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;settings.statusAutomationEnabled=incoming.statusAutomationEnabled===true;settings.statusRules=normaliseStatusRules(incoming.statusRules,settings.statuses);settings.replacement=normaliseReplacementSettings(incoming.replacement,settings.statuses);const previousFaultFieldId=clean(previousSettings?.jiraFaultField?.id||'');const nextFaultFieldId=clean(settings?.jiraFaultField?.id||'');const previousProjectKey=clean(previousSettings?.jiraProjectKey||'');const nextProjectKey=clean(settings?.jiraProjectKey||'');if(previousFaultFieldId!==nextFaultFieldId||previousProjectKey!==nextProjectKey){const cachedTickets=await queryAllByPrefix(ASSET_TICKET_PREFIX);for(const ticket of cachedTickets){if(ticket?.assetId&&ticket?.key&&ticket?.relation)await kvs.delete(`${ASSET_TICKET_PREFIX}${ticket.assetId}:${ticket.key}:${ticket.relation}`);}const faultHistory=await queryAllByPrefix(FAULT_HISTORY_PREFIX);for(const item of faultHistory){if(item?.historyKey)await kvs.delete(item.historyKey);}console.log('Device Fault mapping changed; cleared cached ticket/fault data');}await kvs.set(SETTINGS_KEY,settings);if(scanSignature(previousSettings)!==scanSignature(settings)){await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);}return settings;});
+resolver.define('saveSettings',async({payload})=>{const incoming=payload?.settings||{};const previousSettings=await getSettingsValue();const normaliseField=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;const settings={assetTypes:safeArray(incoming.assetTypes).map(clean).filter(Boolean),statuses:safeArray(incoming.statuses).map(clean).filter(Boolean),locations:safeArray(incoming.locations).map(clean).filter(Boolean),customFields:safeArray(incoming.customFields).map(f=>({key:clean(f.key),label:clean(f.label),type:clean(f.type||'text')})).filter(f=>f.key&&f.label),jiraAssetField:normaliseField(incoming.jiraAssetField),jiraRelatedAssetField:normaliseField(incoming.jiraRelatedAssetField),jiraLocationField:normaliseField(incoming.jiraLocationField),jiraTypeField:normaliseField(incoming.jiraTypeField),jiraCrewCodeField:normaliseField(incoming.jiraCrewCodeField),jiraClientField:normaliseField(incoming.jiraClientField),jiraProjectKey:clean(incoming.jiraProjectKey||''),jiraFaultField:normaliseField(incoming.jiraFaultField),crewMappings:safeArray(incoming.crewMappings).map(m=>({crewCode:clean(m.crewCode),accountId:clean(m.accountId),displayName:clean(m.displayName)})).filter(m=>m.crewCode&&(m.displayName||m.accountId)),jiraDiscoveryEnabled:incoming.jiraDiscoveryEnabled!==false,deviceIdPatterns:safeArray(incoming.deviceIdPatterns).map(clean).filter(Boolean).slice(0,20)};if(!settings.assetTypes.length)settings.assetTypes=DEFAULT_SETTINGS.assetTypes;if(!settings.statuses.length)settings.statuses=DEFAULT_SETTINGS.statuses;settings.statusAutomationEnabled=incoming.statusAutomationEnabled===true;settings.statusRules=normaliseStatusRules(incoming.statusRules,settings.statuses);settings.replacement=normaliseReplacementSettings(incoming.replacement,settings.statuses);const previousFaultFieldId=clean(previousSettings?.jiraFaultField?.id||'');const nextFaultFieldId=clean(settings?.jiraFaultField?.id||'');const previousProjectKey=clean(previousSettings?.jiraProjectKey||'');const nextProjectKey=clean(settings?.jiraProjectKey||'');if(previousFaultFieldId!==nextFaultFieldId||previousProjectKey!==nextProjectKey){const cachedTickets=await queryAllByPrefix(ASSET_TICKET_PREFIX);for(const ticket of cachedTickets){if(ticket?.assetId&&ticket?.key&&ticket?.relation)await kvs.delete(`${ASSET_TICKET_PREFIX}${ticket.assetId}:${ticket.key}:${ticket.relation}`);}const faultHistory=await queryAllByPrefix(FAULT_HISTORY_PREFIX);for(const item of faultHistory){if(item?.historyKey)await kvs.delete(item.historyKey);}console.log('Device Fault mapping changed; cleared cached ticket/fault data');}await kvs.set(SETTINGS_KEY,settings);if(scanSignature(previousSettings)!==scanSignature(settings)){await kvs.delete(SYNC_KEY);await kvs.delete(SYNC_PROGRESS_KEY);}return settings;});
 resolver.define('searchUsers',async({payload})=>{const q=clean(payload?.query||'');if(!q||q.length<2)return[];const response=await api.asUser().requestJira(route`/rest/api/3/user/search?query=${q}&maxResults=20`,{headers:{Accept:'application/json'}});if(!response.ok)return[];const users=await response.json();return users.filter(u=>u.active!==false&&u.accountType!=='app').map(u=>({accountId:u.accountId,displayName:u.displayName,avatarUrl:u.avatarUrls?.['24x24']||''}));});
 resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const settings=await getSettingsValue();const recorded=(await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`)).filter(ticket=>ticketMatchesConfiguredProject(ticket,settings));const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId&&ticketMatchesConfiguredProject({key:l.issueKey},settings)).map(l=>l.issueKey).filter(Boolean);
   // Live, targeted search first: the tickets recorded by sync are never pruned, so they go stale when a
