@@ -38,7 +38,10 @@ export function reporterSummary(tickets = []) {
   return [...byCode.values()].sort((a, b) => String(b.last).localeCompare(String(a.last)));
 }
 
-const HOLDER_EVENTS = new Set(['created', 'holder-conflict-accepted', 'holder-conflict-kept', 'holder-bulk-accepted', 'replaced', 'merged']);
+const HOLDER_EVENTS = new Set(['holder-conflict-accepted', 'holder-conflict-kept', 'holder-bulk-accepted', 'replaced', 'merged']);
+// "Asset discovered from Jira" / "Asset created" say nothing about who has the device; a device
+// created as a replacement on a HW ticket does.
+const holderEvent = (h) => HOLDER_EVENTS.has(h.type) || (h.type === 'created' && h.source === 'ticket-replacement') || (h.changes || []).some((c) => HOLDER_FIELDS.has(c.field));
 const HOLDER_FIELDS = new Set(['assigned person', 'assignment reference', 'assigned since', 'crewCode', 'assigneeName', 'assignedAt']);
 
 // One list, newest first: tickets (flagged when raised under someone other than the current
@@ -51,7 +54,7 @@ export function buildDeviceTimeline(asset = {}, tickets = [], history = []) {
     otherHolder: Boolean(holderCode && String(t.crewCode || '').trim() && norm(t.crewCode) !== holderCode && t.relation !== 'related')
   }));
   const holderEvents = history
-    .filter((h) => HOLDER_EVENTS.has(h.type) || (h.changes || []).some((c) => HOLDER_FIELDS.has(c.field)))
+    .filter(holderEvent)
     .map((h) => ({ kind: 'holder', at: h.timestamp || '', type: h.type || '', message: h.message || '', issueKey: h.issueKey || '', by: h.changedByName || '', changes: (h.changes || []).filter((c) => HOLDER_FIELDS.has(c.field)) }));
   const latestRun = latestReporterRun(tickets);
   const assigned = dateOnly(asset.assignedAt);

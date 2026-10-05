@@ -28,3 +28,8 @@ test('the timeline merges tickets and holder changes newest first, with base, an
   assert.equal(tl.latestMatchesHolder, true);
   assert.equal(dateOnly('2026-03-04T10:20:00.000+0000'), '2026-03-04');
 });
+
+test('creation entries are left out, except a device created as a replacement', () => {
+  const history = [{ type: 'created', source: 'jira-sync', timestamp: '2026-10-05T00:00:00Z', message: 'Asset discovered from Jira' }, { type: 'created', source: 'ticket-replacement', timestamp: '2026-10-04T00:00:00Z', message: 'Created as the replacement for X on HW-1' }];
+  assert.deepEqual(buildDeviceTimeline({}, [], history).events.map((e) => e.message), ['Created as the replacement for X on HW-1']);
+});
