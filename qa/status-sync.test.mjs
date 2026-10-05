@@ -13,9 +13,13 @@ mock.module('@forge/kvs', { namedExports: {
 let issueFields = {};
 const jiraCalls = [];
 const json = (body) => ({ ok: true, status: 200, json: async () => body });
-const requestJira = async (path) => {
+let editMeta = {};
+const jiraUpdates = [];
+const requestJira = async (path, options = {}) => {
   const url = String(path); jiraCalls.push(url);
   if (url.startsWith('/rest/api/3/mypermissions')) return json({ permissions: { ADMINISTER: { havePermission: true } } });
+  if (url.endsWith('/editmeta')) return json({ fields: editMeta });
+  if (options.method === 'PUT') { jiraUpdates.push({ url, body: JSON.parse(options.body) }); return { ok: true, status: 204, json: async () => ({}) }; }
   if (url.startsWith('/rest/api/3/issue/')) return json({ fields: issueFields });
   throw new Error(`Unexpected Jira call ${url}`);
 };
@@ -34,7 +38,7 @@ const device = (identifier, status) => { const id = jiraAssetId('customfield_100
 const history = (id) => [...store.keys()].filter((k) => k.startsWith(`asset-history:${id}:`)).map((k) => store.get(k));
 const log = () => store.get('status-automation:log') || [];
 
-beforeEach(() => { store.clear(); jiraCalls.length = 0; kvsOps = 0; store.set('settings:asset-manager', structuredClone(SETTINGS)); });
+beforeEach(() => { store.clear(); jiraCalls.length = 0; jiraUpdates.length = 0; editMeta = {}; kvsOps = 0; store.set('settings:asset-manager', structuredClone(SETTINGS)); });
 
 test('rules keep configured device-status spelling and drop incomplete or unknown ones', () => {
   const rules = normaliseStatusRules([
@@ -221,4 +225,67 @@ test('edits to other fields do no Device ID work at all', async () => {
   await handler({ eventType: 'avi:jira:updated:issue', issue: { key: 'SD-13' }, changelog: { items: [{ fieldId: 'summary', toString: 'x' }] } });
   assert.equal(kvsOps, 0);
   assert.equal(jiraCalls.length, 0);
+});
+
+// Device type filled from the register when the Device ID is a registered device.
+const TYPE_OPTIONS = { customfield_200: { schema: { type: 'option' }, allowedValues: [{ id: '10', value: 'vPOS' }, { id: '11', value: 'PED' }] } };
+const typed = (identifier, type) => { const id = device(identifier, 'In Use'); store.set(`asset:${id}`, { ...store.get(`asset:${id}`), type }); return id; };
+
+test('a new ticket with a registered Device ID gets the device type from the register', async () => {
+  withFormat(); editMeta = TYPE_OPTIONS;
+  const id = typed('RYRS402403', 'vpos');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRS402403', customfield_200: null };
+  const result = await handler({ eventType: 'avi:jira:created:issue', issue: { key: 'SD-20' } });
+  assert.equal(result.deviceType, 'filled');
+  assert.deepEqual(jiraUpdates, [{ url: '/rest/api/3/issue/SD-20', body: { fields: { customfield_200: { id: '10' } } } }]);
+  assert.match(history(id).at(-1).message, /Device type vpos filled in on SD-20/);
+});
+
+test('changing the Device ID fills the type; a type already on the ticket is never changed', async () => {
+  withFormat(); editMeta = TYPE_OPTIONS;
+  typed('RYRBP12345', 'PED');
+  const edit = (key) => ({ eventType: 'avi:jira:updated:issue', issue: { key }, changelog: { items: [{ fieldId: 'customfield_100', toString: 'RYRBP12345' }] } });
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRBP12345' };
+  assert.equal((await handler(edit('SD-21'))).deviceType, 'filled');
+  assert.deepEqual(jiraUpdates.at(-1).body, { fields: { customfield_200: { id: '11' } } });
+  jiraUpdates.length = 0;
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRBP12345', customfield_200: { value: 'vPOS' } };
+  assert.equal((await handler(edit('SD-22'))).deviceType, undefined);
+  assert.equal(jiraUpdates.length, 0);
+});
+
+test('the type is left alone when it is not an option, the device is unknown, or the setting is off', async () => {
+  withFormat(); editMeta = TYPE_OPTIONS;
+  const created = (key) => handler({ eventType: 'avi:jira:created:issue', issue: { key } });
+  typed('RYRDPP123', 'Printer');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRDPP123' };
+  assert.equal((await created('SD-23')).deviceType, 'type-not-an-option');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRS999999' };
+  assert.equal((await created('SD-24')).deviceType, 'device-not-in-register');
+  typed('RYRG000001', 'Other');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRG000001' };
+  assert.equal((await created('SD-25')).deviceType, 'no-type-in-register');
+  typed('RYRS402403', 'vPOS');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRS402403' };
+  editMeta = {};
+  assert.equal((await created('SD-26')).deviceType, 'type-field-not-on-screen');
+  editMeta = TYPE_OPTIONS;
+  store.set('settings:asset-manager', { ...store.get('settings:asset-manager'), fillTicketTypeFromRegister: false });
+  assert.equal((await created('SD-27')).deviceType, undefined);
+  assert.equal(jiraUpdates.length, 0);
+});
+
+test('a text Device type field gets the register spelling', async () => {
+  withFormat(); editMeta = { customfield_200: { schema: { type: 'string' } } };
+  typed('RYRS402403', 'vPOS');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'RYRS402403' };
+  await handler({ eventType: 'avi:jira:created:issue', issue: { key: 'SD-28' } });
+  assert.deepEqual(jiraUpdates.at(-1).body, { fields: { customfield_200: 'vPOS' } });
+});
+
+test('the fill setting is saved, on unless turned off', async () => {
+  await main.saveSettings({ payload: { settings: { ...SETTINGS } }, context: {} });
+  assert.equal(store.get('settings:asset-manager').fillTicketTypeFromRegister, true);
+  await main.saveSettings({ payload: { settings: { ...SETTINGS, fillTicketTypeFromRegister: false } }, context: {} });
+  assert.equal(store.get('settings:asset-manager').fillTicketTypeFromRegister, false);
 });

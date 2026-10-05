@@ -10,7 +10,8 @@ import { recordTicketRejection } from './device-id-review.js';
 
 // Trigger on avi:jira:created:issue and avi:jira:updated:issue (internal edition).
 // When a ticket is created or its Device ID changes, a value that isn't a Device ID goes onto the
-// Device ID clean-up list straight away. When a ticket's status changes:
+// Device ID clean-up list straight away, and a Device ID that is in the register fills an empty
+// Device type field from the register. When a ticket's status changes:
 // - status rules set the status of the device on the ticket (main Device ID field, or the
 //   "existing" field of a replacement pair on HW tickets);
 // - the replacement rule moves the old device's holder, client and location onto the
@@ -144,7 +145,45 @@ async function checkDeviceIdOnSave(event, issueKey) {
     const check = checkDeviceId(value, compiled, ticketType);
     if (check && !check.ok) { await recordTicketRejection(value, check.reason, issueKey); rejected.push(value); }
   }
-  return { deviceIdRejected: rejected };
+  const deviceType = await fillTypeFromRegister(stored, fields, issueKey, fieldId, typeFieldId);
+  return { deviceIdRejected: rejected, ...(deviceType ? { deviceType } : {}) };
+}
+
+// The Jira value for a type in the Device type field: the matching option on a select field
+// (Jira's spelling), the text on a text field, or null when the field has no such option.
+function typeFieldValue(def, type) {
+  const key = normaliseName(type);
+  if (Array.isArray(def.allowedValues)) {
+    const option = def.allowedValues.find((o) => normaliseName(o?.value ?? o?.name) === key);
+    if (!option) return null;
+    const ref = option.id ? { id: String(option.id) } : { value: option.value ?? option.name };
+    return def.schema?.type === 'array' ? [ref] : ref;
+  }
+  return def.schema?.type === 'string' ? type : null;
+}
+
+// A ticket whose Device ID is in the register gets the device's type in an empty Device type
+// field, on create or when the Device ID changes. A type already on the ticket is never
+// overwritten. Writing the type is a change to another field, so it doesn't run this again.
+async function fillTypeFromRegister(settings, fields, issueKey, fieldId, typeFieldId) {
+  if (!typeFieldId || settings.fillTicketTypeFromRegister === false || firstValue(fields[typeFieldId])) return null;
+  const ids = identifiersIn(fields[fieldId]);
+  if (ids.length !== 1) return ids.length ? 'multiple-devices' : null;
+  const device = await findDevice(fieldId, ids[0]);
+  if (!device) return 'device-not-in-register';
+  const type = clean(device.type);
+  // "Other" is what devices get when nobody set a type; it says nothing useful on a ticket.
+  if (!type || normaliseName(type) === 'other') return 'no-type-in-register';
+  const meta = await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}/editmeta`, { headers: { Accept: 'application/json' } });
+  if (!meta.ok) return 'jira-read-failed';
+  const def = (await meta.json()).fields?.[typeFieldId];
+  if (!def) return 'type-field-not-on-screen';
+  const value = typeFieldValue(def, type);
+  if (value === null) return 'type-not-an-option';
+  const put = await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}`, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { [typeFieldId]: value } }) });
+  if (!put.ok) return 'jira-update-failed';
+  await addHistory(device.id, { type: 'ticket-field-sync', source: 'jira', issueKey, message: `Device type ${type} filled in on ${issueKey}`, fields: ['Device type'] });
+  return 'filled';
 }
 
 export async function handler(event) {
