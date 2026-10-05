@@ -166,3 +166,11 @@ test('fix checks the chosen device against its own type format', async () => {
   await assert.rejects(call('resolveDeviceIdValue', { value: 'R58M21ABC', action: 'fix', deviceId: 'DEV1234' }), /DEV1234 does not pass the Device ID format rule \(Doesn't match the Tablet format \(TAB####\)\)/);
   assert.equal(puts.length, 0);
 });
+
+test('a scanned barcode value suggests the Device ID inside it', async () => {
+  store.set('asset:B1', { id: 'B1', name: 'RYRBP24481', jiraIdentifier: 'RYRBP24481' });
+  tickets = [ticket('OPS-20', 'BP50=RYRBP24481^68:AA:D2:17:F5:97')];
+  await call('previewJiraScan');
+  const { values } = await call('getDeviceIdReview');
+  assert.deepEqual([values[0].value, values[0].suggestion.deviceId, values[0].suggestion.matchedBy], ['BP50=RYRBP24481^68:AA:D2:17:F5:97', 'RYRBP24481', 'Device ID inside the value']);
+});

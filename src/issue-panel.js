@@ -115,7 +115,7 @@ async function resolveIdentifiers(identifiers, fieldId) {
 // Device ID ("DEV1234 cracked"). Bounded like resolveIdentifiers.
 async function suggestDevice(value) {
   const target = normalise(value);
-  const tokens = String(value).split(/[\s,;/|]+/).map(normalise).filter((t) => t.length >= 4);
+  const tokens = String(value).split(/[\s,;/|=^:]+/).map(normalise).filter((t) => t.length >= 4);
   let cursor;
   for (let page = 0; page < ASSET_SCAN_PAGES; page += 1) {
     let query = kvs.query().where('key', WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);

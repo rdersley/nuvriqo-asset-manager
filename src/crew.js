@@ -3,10 +3,13 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { guardResolver } from './auth.js';
 import { trackActor, actorFields } from './actor.js';
+import { registerSotiResolvers } from './soti.js';
 
 // Internal Asset Operations handles crew personal data (emails, usernames,
 // contract dates) and rewrites asset holders, so every action is admin-only.
 const resolver = trackActor(guardResolver(new Resolver(), 'all'));
+// SOTI Sync page (src/soti.js), on this admin page so it stays out of the Marketplace build.
+registerSotiResolvers(resolver);
 const SETTINGS_KEY = 'settings:asset-manager';
 const CREW_PREFIX = 'internal-crew:';
 const CREW_ALIAS_PREFIX = 'internal-crew-alias:';

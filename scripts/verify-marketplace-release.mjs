@@ -36,7 +36,7 @@ if (!/^app:\s*\n(?:[ \t]+.*\n)*?[ \t]+licensing:\s*\n[ \t]+enabled:\s*true\b/m.t
 
 // Every Marketplace function must enforce the licence, and none may pull in internal-only modules
 // (the release workflows delete them before forge lint/deploy).
-const INTERNAL_ONLY_MODULES = ['crew.js', 'portal-plus-publisher.js', 'portal-plus-refresh.js'];
+const INTERNAL_ONLY_MODULES = ['crew.js', 'portal-plus-publisher.js', 'portal-plus-refresh.js', 'soti.js'];
 const srcFile = (name) => new URL(`../src/${name}`, import.meta.url);
 const handlerFiles = [...manifest.matchAll(/handler:\s*([\w-]+)\.handler/g)].map((m) => `${m[1]}.js`);
 if (!handlerFiles.length) failures.push('Marketplace manifest declares no function handlers.');
