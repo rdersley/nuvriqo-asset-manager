@@ -1,8 +1,9 @@
 import { invoke as bridgeInvoke } from '@forge/bridge';
 
 // Forge rate-limits resolver invocations per installation and rejects the excess with
-// this message. It is temporary, so wait and retry instead of failing the screen.
-const RATE_LIMITED = /Limits for the current installation have been exceeded/i;
+// this message, and the admin check reports a busy Jira. Both are temporary, so wait and retry
+// instead of failing the screen.
+const RATE_LIMITED = /Limits for the current installation have been exceeded|Jira is busy and couldn't confirm/i;
 export const RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
