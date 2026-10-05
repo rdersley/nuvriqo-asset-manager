@@ -8,10 +8,11 @@ import { licensedResolver } from './licence.js';
 import { trackActor, actorFields } from './actor.js';
 import { checkDeviceId, compileDeviceIdPatterns } from './device-id-rule.js';
 import { DEVICE_ID_REVIEW_PREFIX, deviceIdReviewKey } from './device-id-review.js';
+import { buildDeviceTimeline, bulkCandidate, dateOnly } from './device-timeline.js';
 
 // Actions that change configuration, run Jira discovery or write many assets
 // at once. Everyday create/edit and guarded single delete stay open to users.
-const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict', 'tidyAssetTypes', 'previewJiraScan', 'getDeviceIdReview', 'resolveDeviceIdValue']);
+const ADMIN_RESOLVERS = new Set(['saveSettings', 'syncAssetsFromJira', 'bulkImportAssets', 'previewAssetImportReconciliation', 'reconcileAssetImport', 'bulkRemoveAssets', 'getStatusAutomationLog', 'getDataConflicts', 'resolveDataConflict', 'tidyAssetTypes', 'previewJiraScan', 'getDeviceIdReview', 'resolveDeviceIdValue', 'bulkHolderConflicts']);
 const resolver = trackActor(guardResolver(licensedResolver(new Resolver()), ADMIN_RESOLVERS));
 const BULK_REMOVE_BATCH = 25;
 const JIRA_DISCOVERED_NOTE = 'Discovered automatically from Jira field';
@@ -69,7 +70,7 @@ const validIdentifier = (value) => {
 function makeAssetId() { return `AST-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`; }
 function makeJiraAssetId(fieldId, identifier) { return `AST-JIRA-${createHash('sha256').update(`${fieldId}:${normaliseName(identifier)}`).digest('hex').slice(0, 24).toUpperCase()}`; }
 function normaliseAsset(input = {}, existing = {}) {
-  return { ...existing, id: clean(input.id || existing.id || makeAssetId()), name: clean(input.name ?? existing.name ?? ''), jiraIdentifier: clean(input.jiraIdentifier ?? existing.jiraIdentifier ?? ''), jiraIdentifierFieldId: clean(input.jiraIdentifierFieldId ?? existing.jiraIdentifierFieldId ?? ''), jiraIdentifierFieldName: clean(input.jiraIdentifierFieldName ?? existing.jiraIdentifierFieldName ?? ''), jiraSyncRunId: clean(input.jiraSyncRunId ?? existing.jiraSyncRunId ?? ''), client: clean(input.client ?? existing.client ?? ''), jiraClientSyncRunId: clean(input.jiraClientSyncRunId ?? existing.jiraClientSyncRunId ?? ''), crewCode: clean(input.crewCode ?? existing.crewCode ?? ''), type: clean(input.type ?? existing.type ?? 'Other'), manufacturer: clean(input.manufacturer ?? existing.manufacturer ?? ''), model: clean(input.model ?? existing.model ?? ''), serialNumber: clean(input.serialNumber ?? existing.serialNumber ?? ''), assigneeAccountId: clean(input.assigneeAccountId ?? existing.assigneeAccountId ?? ''), assigneeName: clean(input.assigneeName ?? existing.assigneeName ?? ''), status: clean(input.status ?? existing.status ?? 'Available'), location: clean(input.location ?? existing.location ?? ''), purchaseDate: clean(input.purchaseDate ?? existing.purchaseDate ?? ''), warrantyExpiry: clean(input.warrantyExpiry ?? existing.warrantyExpiry ?? ''), notes: clean(input.notes ?? existing.notes ?? ''), customFields: typeof input.customFields === 'object' && input.customFields !== null ? input.customFields : (existing.customFields || {}), createdAt: existing.createdAt || now(), updatedAt: now() };
+  return { ...existing, id: clean(input.id || existing.id || makeAssetId()), name: clean(input.name ?? existing.name ?? ''), jiraIdentifier: clean(input.jiraIdentifier ?? existing.jiraIdentifier ?? ''), jiraIdentifierFieldId: clean(input.jiraIdentifierFieldId ?? existing.jiraIdentifierFieldId ?? ''), jiraIdentifierFieldName: clean(input.jiraIdentifierFieldName ?? existing.jiraIdentifierFieldName ?? ''), jiraSyncRunId: clean(input.jiraSyncRunId ?? existing.jiraSyncRunId ?? ''), client: clean(input.client ?? existing.client ?? ''), jiraClientSyncRunId: clean(input.jiraClientSyncRunId ?? existing.jiraClientSyncRunId ?? ''), crewCode: clean(input.crewCode ?? existing.crewCode ?? ''), type: clean(input.type ?? existing.type ?? 'Other'), manufacturer: clean(input.manufacturer ?? existing.manufacturer ?? ''), model: clean(input.model ?? existing.model ?? ''), serialNumber: clean(input.serialNumber ?? existing.serialNumber ?? ''), assigneeAccountId: clean(input.assigneeAccountId ?? existing.assigneeAccountId ?? ''), assigneeName: clean(input.assigneeName ?? existing.assigneeName ?? ''), assignedAt: clean(input.assignedAt ?? existing.assignedAt ?? ''), status: clean(input.status ?? existing.status ?? 'Available'), location: clean(input.location ?? existing.location ?? ''), purchaseDate: clean(input.purchaseDate ?? existing.purchaseDate ?? ''), warrantyExpiry: clean(input.warrantyExpiry ?? existing.warrantyExpiry ?? ''), notes: clean(input.notes ?? existing.notes ?? ''), customFields: typeof input.customFields === 'object' && input.customFields !== null ? input.customFields : (existing.customFields || {}), createdAt: existing.createdAt || now(), updatedAt: now() };
 }
 async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...actorFields(), ...event }); }
 function faultHistoryKey(assetId,ticket){const label=clean(ticket?.fault||'');if(!label)return'';const fingerprint=createHash('sha256').update(`${ticket?.key||''}:${normaliseName(label)}`).digest('hex').slice(0,16);return `${FAULT_HISTORY_PREFIX}${assetId}:${ticket?.key||'unknown'}:${fingerprint}`;}
@@ -91,6 +92,17 @@ async function saveOneAsset(supplied, source = 'manual', options = {}) {
   if (!clean(supplied?.name)) throw new Error('Device name is required.');
   const existing = options.existing !== undefined ? options.existing : supplied.id ? await kvs.get(`${ASSET_PREFIX}${supplied.id}`) : null;
   const asset = { ...normaliseAsset(supplied, existing || {}), ...(options.extra || {}) };
+  // Assigned since: when the holder changes, the date it changed, unless the caller gave one
+  // (options.assignedAt: the ticket's date) or the user typed a different date with the change.
+  const text = (v) => String(clean(v) || '');
+  const holderKey = (a) => `${text(a?.crewCode)}|${text(a?.assigneeAccountId) || text(a?.assigneeName)}`.toLowerCase();
+  const person = (a) => (text(a?.assigneeAccountId) || text(a?.assigneeName)).toLowerCase();
+  // Adding the crew code to the same person is not a new assignment.
+  const codeAddedOnly = existing && !text(existing.crewCode) && person(existing) && person(existing) === person(asset);
+  if (existing && holderKey(existing) !== holderKey(asset) && !(codeAddedOnly && existing.assignedAt)) {
+    const typed = text(supplied?.assignedAt) && text(supplied.assignedAt) !== text(existing.assignedAt);
+    asset.assignedAt = !holderOf(asset) ? '' : typed ? text(supplied.assignedAt) : (options.assignedAt || now().slice(0, 10));
+  } else if (!existing && holderOf(asset) && !asset.assignedAt && options.assignedAt) asset.assignedAt = options.assignedAt;
   if (source !== 'jira-sync' && !asset.curatedAt) asset.curatedAt = asset.updatedAt || now();
   if (source !== 'jira-sync') {
     await assertUniqueDeviceName(asset.name, asset.id);
@@ -111,6 +123,7 @@ async function saveOneAsset(supplied, source = 'manual', options = {}) {
     if(existing.jiraIdentifier!==asset.jiraIdentifier)changes.push({field:asset.jiraIdentifierFieldName||'Jira device identifier',from:existing.jiraIdentifier||'',to:asset.jiraIdentifier||''});
     if(existing.crewCode!==asset.crewCode)changes.push({field:'assignment reference',from:existing.crewCode||'',to:asset.crewCode||''});
     if((existing.assigneeAccountId||existing.assigneeName)!==(asset.assigneeAccountId||asset.assigneeName))changes.push({field:'assigned person',from:existing.assigneeName||existing.crewCode||'Unassigned',to:asset.assigneeName||asset.crewCode||'Unassigned'});
+    if((existing.assignedAt||'')!==(asset.assignedAt||''))changes.push({field:'assigned since',from:existing.assignedAt||'',to:asset.assignedAt||''});
     if(existing.type!==asset.type)changes.push({field:'device type',from:existing.type||'',to:asset.type||''});
     if(existing.status!==asset.status)changes.push({field:'status',from:existing.status||'',to:asset.status||''});
     if(existing.location!==asset.location)changes.push({field:'location',from:existing.location||'',to:asset.location||''});
@@ -119,8 +132,8 @@ async function saveOneAsset(supplied, source = 'manual', options = {}) {
   }
   return asset;
 }
-function ticketFields(issue, relation='primary', faultFieldId=null) { return { key:issue.key, relation, summary:issue.fields?.summary||'', fault:faultFieldId?fieldValues(issue.fields?.[faultFieldId]).join(', '):'', status:issue.fields?.status?.name||'', statusCategory:issue.fields?.status?.statusCategory?.key||'', issueType:issue.fields?.issuetype?.name||'', priority:issue.fields?.priority?.name||'', assignee:issue.fields?.assignee?.displayName||'', created:issue.fields?.created||'', resolved:issue.fields?.resolutiondate||'', resolution:issue.fields?.resolution?.name||'' }; }
-function relatedTicketFields(issue,faultFieldId=null){return faultFieldId?ticketFields(issue,'related',faultFieldId):ticketFields(issue,'related');}
+function ticketFields(issue, relation='primary', faultFieldId=null, crewFieldId=null, baseFieldId=null) { return { key:issue.key, relation, summary:issue.fields?.summary||'', crewCode:crewFieldId?(fieldValues(issue.fields?.[crewFieldId])[0]||''):'', base:baseFieldId?(fieldValues(issue.fields?.[baseFieldId])[0]||''):'', fault:faultFieldId?fieldValues(issue.fields?.[faultFieldId]).join(', '):'', status:issue.fields?.status?.name||'', statusCategory:issue.fields?.status?.statusCategory?.key||'', issueType:issue.fields?.issuetype?.name||'', priority:issue.fields?.priority?.name||'', assignee:issue.fields?.assignee?.displayName||'', created:issue.fields?.created||'', resolved:issue.fields?.resolutiondate||'', resolution:issue.fields?.resolution?.name||'' }; }
+function relatedTicketFields(issue,faultFieldId=null,crewFieldId=null,baseFieldId=null){return faultFieldId||crewFieldId||baseFieldId?ticketFields(issue,'related',faultFieldId,crewFieldId,baseFieldId):ticketFields(issue,'related');}
 function fieldValues(value) { if(value==null)return[]; if(Array.isArray(value))return value.flatMap(fieldValues); if(typeof value==='string'||typeof value==='number')return[String(value).trim()].filter(Boolean); if(typeof value==='object'){const candidate=value.value??value.name??value.label??value.displayName??value.objectKey??value.key; return candidate?[String(candidate).trim()]:[];} return[]; }
 function relatedIdentifiers(value) {
   if(value==null)return[];
@@ -214,7 +227,7 @@ async function recordRejectedDeviceIds(rejected,runId){
   }));
 }
 async function findAssetForJiraIdentifier(fieldId,identifier){const deterministicId=makeJiraAssetId(fieldId,identifier);let asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(asset)return asset;const indexed=await kvs.get(nameIndexKey(identifier));if(indexed?.assetId)asset=await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);return asset||null;}
-async function recordScannedTicketsForAsset(asset,issues,field,settings,runId){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;const client=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraClientField?.id);if(client&&asset.jiraClientSyncRunId!==runId)asset=await saveOneAsset({...asset,client,jiraClientSyncRunId:runId},'jira-sync');for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});}}
+async function recordScannedTicketsForAsset(asset,issues,field,settings,runId){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;const client=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraClientField?.id);if(client&&asset.jiraClientSyncRunId!==runId)asset=await saveOneAsset({...asset,client,jiraClientSyncRunId:runId},'jira-sync');for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id,settings.jiraCrewCodeField?.id,settings.jiraLocationField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});}}
 async function syncAssetsFromJira({restart=false}={}){
   const previous=await kvs.get(SYNC_KEY);
   let progress=await kvs.get(SYNC_PROGRESS_KEY);
@@ -238,7 +251,7 @@ async function syncAssetsFromJira({restart=false}={}){
     // ticket may be a handover, someone reporting for a colleague, or a mistyped Device ID, so it is
     // recorded as a conflict for review instead of reassigning the device.
     const holder=crewCode?compareHolder(asset,crewCode,holderName,holderAccountId):null;const crewUpdate=Boolean(holder&&(!holder.hasHolder||(holder.same&&!clean(asset.crewCode))));
-    if(holder?.hasHolder&&!alreadyProcessed){if(holder.same)await kvs.delete(HOLDER_CONFLICT_PREFIX+asset.id);else if(await recordHolderConflict(asset,crewIssue,{crewCode,holderName,holderAccountId}))batchConflicts+=1;}if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||typeOf.get(normaliseName(identifier))||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}
+    if(holder?.hasHolder&&!alreadyProcessed){if(holder.same)await kvs.delete(HOLDER_CONFLICT_PREFIX+asset.id);else if(await recordHolderConflict(asset,crewIssue,{crewCode,holderName,holderAccountId}))batchConflicts+=1;}if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync',crewUpdate?{assignedAt:dateOnly(crewIssue?.fields?.created)}:{});}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||typeOf.get(normaliseName(identifier))||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync',{assignedAt:crewCode?dateOnly(crewIssue?.fields?.created):''});batchCreated+=1;}
     await recordScannedTicketsForAsset(asset,issues,field,settings,progress.runId);
   }
   await addNewAssetTypes(types);
@@ -252,7 +265,7 @@ async function searchAssetTicketsDetailed(assetId,legacyKeys=[]){
   const identifiers=[asset?.jiraIdentifier||asset?.name||'',...safeArray(asset?.jiraAliases)].filter(validIdentifier);
   if(identifiers.length){
     const found=await searchIssuesForIdentifiers(identifiers);const{field,issues,settings}=found;truncated=Boolean(found.truncated);
-    if(field){for(const issue of issues){if(identifiers.some(id=>issueMatchesIdentifier(issue,field.id,id)))matched.set(issue.key,ticketFields(issue,'primary',settings.jiraFaultField?.id));else if(identifiers.some(id=>issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,id)))matched.set(issue.key,relatedTicketFields(issue,settings.jiraFaultField?.id));}}
+    if(field){for(const issue of issues){if(identifiers.some(id=>issueMatchesIdentifier(issue,field.id,id)))matched.set(issue.key,ticketFields(issue,'primary',settings.jiraFaultField?.id,settings.jiraCrewCodeField?.id,settings.jiraLocationField?.id));else if(identifiers.some(id=>issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,id)))matched.set(issue.key,relatedTicketFields(issue,settings.jiraFaultField?.id,settings.jiraCrewCodeField?.id,settings.jiraLocationField?.id));}}
   }
   const missingKeys=legacyKeys.filter(k=>ISSUE_KEY_PATTERN.test(k)&&!matched.has(k));
   if(missingKeys.length>100)truncated=true;
@@ -496,7 +509,7 @@ resolver.define('resolveDataConflict',async({payload,context})=>{
   const asset=await kvs.get(ASSET_PREFIX+assetId);if(!asset){await kvs.delete(HOLDER_CONFLICT_PREFIX+assetId);throw new Error('This device no longer exists.');}
   const by=clean(context?.accountId||'');const ticket=conflict.issueKey||'a Jira ticket';
   if(action==='accept'){
-    const saved=await saveOneAsset({...asset,crewCode:conflict.ticketCrewCode,assigneeName:conflict.ticketHolder,assigneeAccountId:conflict.ticketHolderAccountId||''},'conflict-review',{existing:asset});
+    const saved=await saveOneAsset({...asset,crewCode:conflict.ticketCrewCode,assigneeName:conflict.ticketHolder,assigneeAccountId:conflict.ticketHolderAccountId||''},'conflict-review',{existing:asset,assignedAt:dateOnly(conflict.issueCreated)});
     await addHistory(assetId,{type:'holder-conflict-accepted',source:'conflict-review',issueKey:conflict.issueKey,resolvedBy:by,message:`Holder changed from ${holderOf(asset)||'unassigned'} to ${conflict.ticketHolder} after reviewing ${ticket}`});
     await kvs.delete(HOLDER_CONFLICT_PREFIX+assetId);
     return{ok:true,asset:saved};
@@ -504,6 +517,44 @@ resolver.define('resolveDataConflict',async({payload,context})=>{
   await kvs.set(HOLDER_CONFLICT_PREFIX+assetId,{...conflict,status:'kept',resolvedAt:now(),resolvedBy:by});
   await addHistory(assetId,{type:'holder-conflict-kept',source:'conflict-review',issueKey:conflict.issueKey,resolvedBy:by,message:`Kept holder ${holderOf(asset)||'unassigned'}; ${ticket} named ${conflict.ticketHolder}`});
   return{ok:true};
+});
+// Who has had this device: its tickets (with the crew code each was raised under) and its holder
+// changes, newest first, with a summary per crew code.
+resolver.define('getDeviceTimeline',async({payload})=>{
+  const assetId=clean(payload?.assetId||'');if(!assetId)return null;
+  const asset=await kvs.get(ASSET_PREFIX+assetId);if(!asset)return null;
+  let tickets=[],truncated=false,live=true;
+  try{({tickets,truncated}=await searchAssetTicketsDetailed(assetId));}
+  catch{live=false;const byKey=new Map();for(const t of await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`))if(!byKey.has(t.key)||t.relation==='primary')byKey.set(t.key,t);tickets=[...byKey.values()];}
+  const history=await queryAllByPrefix(`${HISTORY_PREFIX}${assetId}:`,1000);
+  const names=await jiraUserNames(history.map(h=>h.changedBy||h.resolvedBy));
+  const named=history.map(h=>{const by=h.changedBy||h.resolvedBy;return by&&names.get(by)?{...h,changedByName:names.get(by)}:h;});
+  return{...buildDeviceTimeline(asset,tickets,named),truncated,live};
+});
+// Bulk holder review, one page of open holder conflicts per call. A device is a candidate when
+// its newest minTickets or more tickets (as recorded by the Jira scan) were all raised under one
+// crew code that isn't its holder, the newest on or after since. apply: move those devices to
+// that person, assigned since the first ticket of that run. Kept conflicts are left alone.
+const BULK_CONFLICT_PAGE=40;
+resolver.define('bulkHolderConflicts',async({payload,context})=>{
+  const settings=await getSettingsValue();const minTickets=Math.max(1,Math.min(Number(payload?.minTickets)||2,20));const since=dateOnly(payload?.since);const apply=payload?.apply===true;
+  let q=kvs.query().where('key',WhereConditions.beginsWith(HOLDER_CONFLICT_PREFIX)).limit(BULK_CONFLICT_PAGE);const cursor=clean(payload?.cursor||'');if(cursor)q=q.cursor(cursor);
+  const page=await q.getMany();const conflicts=safeArray(page.results).map(r=>r.value).filter(c=>c?.assetId&&c.status==='open');
+  const candidates=[];let applied=0;const by=clean(context?.accountId||'');
+  await Promise.all(conflicts.map(async(c)=>{
+    const[asset,tickets]=await Promise.all([kvs.get(ASSET_PREFIX+c.assetId),queryAllByPrefix(`${ASSET_TICKET_PREFIX}${c.assetId}:`,200)]);
+    if(!asset)return;
+    const run=bulkCandidate(asset,tickets.filter(t=>ticketMatchesConfiguredProject(t,settings)),{minTickets,since});if(!run)return;
+    const person=mappedCrewPerson(settings,run.crewCode);const holderName=person?.displayName||run.crewCode;
+    const row={assetId:asset.id,deviceName:asset.name||'',deviceId:asset.jiraIdentifier||asset.name||'',currentHolder:holderOf(asset),currentCrewCode:clean(asset.crewCode),proposedCrewCode:run.crewCode,proposedHolder:holderName,tickets:run.count,since:run.since,until:run.until,issueKeys:run.issueKeys.slice(0,5)};
+    candidates.push(row);
+    if(!apply)return;
+    await saveOneAsset({...asset,crewCode:run.crewCode,assigneeName:holderName,assigneeAccountId:person?.accountId||''},'bulk-holder-review',{existing:asset,assignedAt:dateOnly(run.since)});
+    await addHistory(asset.id,{type:'holder-bulk-accepted',source:'bulk-holder-review',resolvedBy:by,issueKey:run.issueKeys[0]||'',message:`Holder changed from ${row.currentHolder||'unassigned'} to ${holderName}: the last ${run.count} tickets (${run.issueKeys.slice(0,3).join(', ')}${run.count>3?', …':''}) were raised by ${run.crewCode}`});
+    applied+=1;
+  }));
+  candidates.sort((a,b)=>String(b.until).localeCompare(String(a.until)));
+  return{checked:conflicts.length,candidates,applied,nextCursor:page.nextCursor||null};
 });
 // One page of the register: devices whose type differs only in case or spacing from a known type
 // are changed to that spelling. The UI calls this until nextCursor is empty.
