@@ -69,7 +69,7 @@ test('format patterns: # digit, @ letter, ? one, * any; whole value, any case', 
 
 test('preview reports what a scan would do and changes no devices', async () => {
   const r = await call('previewJiraScan');
-  assert.deepEqual(r.found, [{ identifier: 'DEV1234', registered: true }, { identifier: 'DEV9999', registered: false }]);
+  assert.deepEqual(r.found, [{ identifier: 'DEV1234', registered: true, type: '' }, { identifier: 'DEV9999', registered: false, type: '' }]);
   assert.deepEqual(r.rejected.map((x) => [x.value, x.tickets]).sort(), [['35123456789', 1], ['DEV1234 cracked', 1], ['R58M21ABC', 2], ['screen broken', 1]]);
   assert.equal(devices().length, 1, 'no device created');
 });
@@ -136,4 +136,33 @@ test('a value Jira search cannot find stays on the list with its tickets', async
   const r = await call('resolveDeviceIdValue', { value: 'screen broken', action: 'clear' });
   assert.deepEqual([r.notFound, r.done, r.issueKeys], [true, false, ['OPS-5']]);
   assert.equal((await call('getDeviceIdReview')).values.some((v) => v.value === 'screen broken'), true);
+});
+
+test('a format can belong to a device type', () => {
+  const rule = compileDeviceIdPatterns(['Tablet: TAB####', 'vpos: VPOS-*', 'DEV####', 'Not a type: X##'], ['Tablet', 'vPOS']);
+  assert.deepEqual(rule.map((r) => [r.type, r.pattern]), [['Tablet', 'TAB####'], ['vPOS', 'VPOS-*'], [null, 'DEV####'], [null, 'Not a type: X##']]);
+  assert.deepEqual(checkDeviceId('tab0001', rule), { ok: true, type: 'Tablet' });
+  assert.deepEqual(checkDeviceId('VPOS-12', rule), { ok: true, type: 'vPOS' });
+  assert.deepEqual(checkDeviceId('DEV0001', rule), { ok: true, type: null });
+  assert.equal(checkDeviceId('ABC9999', rule, 'tablet').reason, "Doesn't match the Tablet format (TAB####)");
+  assert.equal(checkDeviceId('ABC9999', rule, 'Phone').reason, "Doesn't match the Device ID format");
+  assert.equal(checkDeviceId('VPOS-12', rule, 'Tablet').ok, true, 'another type\'s format still counts as a Device ID');
+});
+
+test('the scan gives a new device the type its Device ID matched', async () => {
+  store.set('settings:asset-manager', { ...store.get('settings:asset-manager'), assetTypes: ['Tablet', 'vPOS'], deviceIdPatterns: ['Tablet: TAB####', 'vPOS: VPOS-*'] });
+  tickets = [ticket('OPS-10', 'TAB0001'), ticket('OPS-11', 'VPOS-77'), ticket('OPS-12', 'DEV5555')];
+  const preview = await call('previewJiraScan');
+  assert.deepEqual(preview.found.map((f) => [f.identifier, f.type]), [['TAB0001', 'Tablet'], ['VPOS-77', 'vPOS']]);
+  await call('syncAssetsFromJira', { restart: true });
+  const types = Object.fromEntries(devices().map((d) => [d.jiraIdentifier || d.name, d.type]));
+  assert.deepEqual([types.TAB0001, types['VPOS-77'], types.DEV5555], ['Tablet', 'vPOS', undefined]);
+});
+
+test('fix checks the chosen device against its own type format', async () => {
+  await call('previewJiraScan');
+  store.set('settings:asset-manager', { ...store.get('settings:asset-manager'), assetTypes: ['Tablet'], deviceIdPatterns: ['Tablet: TAB####'] });
+  store.set('asset:A1', { ...store.get('asset:A1'), type: 'Tablet' });
+  await assert.rejects(call('resolveDeviceIdValue', { value: 'R58M21ABC', action: 'fix', deviceId: 'DEV1234' }), /DEV1234 does not pass the Device ID format rule \(Doesn't match the Tablet format \(TAB####\)\)/);
+  assert.equal(puts.length, 0);
 });

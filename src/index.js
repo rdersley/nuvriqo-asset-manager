@@ -190,15 +190,18 @@ function latestFieldValueForIdentifier(issues, identifierFieldId, identifier, va
 function mappedCrewPerson(settings,crewCode){const target=normaliseName(crewCode);return safeArray(settings.crewMappings).find(m=>normaliseName(m.crewCode)===target)||null;}
 // Values in the Device ID field: real Device IDs (by the basic checks and the configured format)
 // become devices; the rest are returned as `rejected`, with their tickets, for the clean-up report.
-function discoveredIdentifiersFromIssues(issues,fieldId,patterns=[]){
-  const compiled=compileDeviceIdPatterns(patterns);const discovered=new Map(),rejected=new Map();let ignored=0;
+// typeOf maps a real Device ID to the device type whose format it matched (for new devices).
+function discoveredIdentifiersFromIssues(issues,fieldId,settings={}){
+  const compiled=compileDeviceIdPatterns(settings.deviceIdPatterns,settings.assetTypes);const discovered=new Map(),rejected=new Map(),typeOf=new Map();let ignored=0;
   for(const issue of issues)for(const identifier of fieldValues(issue.fields?.[fieldId])){
-    const check=checkDeviceId(identifier,compiled);if(!check)continue;
+    const ticketType=settings.jiraTypeField?.id?fieldValues(issue.fields?.[settings.jiraTypeField.id])[0]||'':'';
+    const check=checkDeviceId(identifier,compiled,ticketType);if(!check)continue;
     const normalized=normaliseName(identifier);
     if(!check.ok){ignored+=1;const entry=rejected.get(normalized)||{value:clean(identifier),reason:check.reason,issueKeys:new Set()};if(issue.key)entry.issueKeys.add(issue.key);rejected.set(normalized,entry);continue;}
     if(!discovered.has(normalized))discovered.set(normalized,identifier);
+    if(check.type&&!typeOf.has(normalized))typeOf.set(normalized,check.type);
   }
-  return{identifiers:[...discovered.values()],ignored,rejected};
+  return{identifiers:[...discovered.values()],ignored,rejected,typeOf};
 }
 const deviceIdReviewKey=(value)=>`${DEVICE_ID_REVIEW_PREFIX}${Buffer.from(normaliseName(value),'utf8').toString('base64url')}`;
 // Adds one page's rejected values to their review records. Counts restart with each scan run, so a
@@ -226,7 +229,7 @@ async function syncAssetsFromJira({restart=false}={}){
   const{field,issues,settings}=page;
   if(!field){const result={timestamp:now(),field:null,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);return result;}
   if(!progress||progress.fieldId!==field.id){progress={fieldId:field.id,projectKey:settings.jiraProjectKey||'',runId:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,nextPageToken:null,issuesScanned:0,discovered:0,created:0,matched:0,ignored:0,reconciled:0,startedAt:now()};if(page.nextPageToken===null&&issues.length===0){const result={timestamp:now(),field,issuesScanned:0,discovered:0,processed:0,created:0,matched:0,ignored:0,reconciled:0,complete:true};await kvs.set(SYNC_KEY,result);return result;}}
-  const{identifiers,ignored,rejected}=discoveredIdentifiersFromIssues(issues,field.id,settings.deviceIdPatterns);await recordRejectedDeviceIds(rejected,progress.runId);const types=typeCatalog(settings);
+  const{identifiers,ignored,rejected,typeOf}=discoveredIdentifiersFromIssues(issues,field.id,settings);await recordRejectedDeviceIds(rejected,progress.runId);const types=typeCatalog(settings);
   let batchCreated=0,batchMatched=0,batchDiscovered=0,batchConflicts=0;
   for(const identifier of identifiers){
     let asset=await findAssetForJiraIdentifier(field.id,identifier);
@@ -237,7 +240,7 @@ async function syncAssetsFromJira({restart=false}={}){
     // ticket may be a handover, someone reporting for a colleague, or a mistyped Device ID, so it is
     // recorded as a conflict for review instead of reassigning the device.
     const holder=crewCode?compareHolder(asset,crewCode,holderName,holderAccountId):null;const crewUpdate=Boolean(holder&&(!holder.hasHolder||(holder.same&&!clean(asset.crewCode))));
-    if(holder?.hasHolder&&!alreadyProcessed){if(holder.same)await kvs.delete(HOLDER_CONFLICT_PREFIX+asset.id);else if(await recordHolderConflict(asset,crewIssue,{crewCode,holderName,holderAccountId}))batchConflicts+=1;}if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}
+    if(holder?.hasHolder&&!alreadyProcessed){if(holder.same)await kvs.delete(HOLDER_CONFLICT_PREFIX+asset.id);else if(await recordHolderConflict(asset,crewIssue,{crewCode,holderName,holderAccountId}))batchConflicts+=1;}if(!alreadyProcessed||locationUpdate||typeUpdate||crewUpdate){asset=await saveOneAsset({...asset,...base,...(locationUpdate?{location}:{}),...(typeUpdate?{type}:{}),...(crewUpdate?{crewCode,assigneeName:holderName,assigneeAccountId:holderAccountId}:{})},'jira-sync');}if(!alreadyProcessed)batchMatched+=1;}else{asset=await saveOneAsset({id:makeJiraAssetId(field.id,identifier),name:identifier,...base,type:type||typeOf.get(normaliseName(identifier))||'Other',status:'In Use',location:location||'',crewCode:crewCode||'',assigneeAccountId:holderAccountId,assigneeName:holderName,notes:`Discovered automatically from Jira field “${field.name}”.`},'jira-sync');batchCreated+=1;}
     await recordScannedTicketsForAsset(asset,issues,field,settings,progress.runId);
   }
   await addNewAssetTypes(types);
@@ -284,11 +287,11 @@ resolver.define('previewJiraScan',async({payload})=>{
   const page=await searchIssuePageWithConfiguredAssetField({nextPageToken:clean(payload?.nextPageToken||'')||null});
   if(!page.field)throw new Error('Map the Jira Device ID field in Configuration before previewing a scan.');
   const runId=clean(payload?.runId||'')||`preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
-  const{identifiers,rejected}=discoveredIdentifiersFromIssues(page.issues,page.field.id,page.settings.deviceIdPatterns);
+  const{identifiers,rejected,typeOf}=discoveredIdentifiersFromIssues(page.issues,page.field.id,page.settings);
   await recordRejectedDeviceIds(rejected,runId);
   const registered=await Promise.all(identifiers.map(id=>findAssetForJiraIdentifier(page.field.id,id)));
   return{runId,issuesScanned:page.issues.length,nextPageToken:page.nextPageToken,
-    found:identifiers.map((identifier,i)=>({identifier,registered:Boolean(registered[i])})),
+    found:identifiers.map((identifier,i)=>({identifier,registered:Boolean(registered[i]),type:typeOf.get(normaliseName(identifier))||''})),
     rejected:[...rejected.values()].map(e=>({value:e.value,reason:e.reason,tickets:e.issueKeys.size}))};
 });
 resolver.define('syncAssetsFromJira',async({payload})=>syncAssetsFromJira({restart:Boolean(payload?.restart)}));
@@ -577,7 +580,7 @@ resolver.define('resolveDeviceIdValue',async({payload,context})=>{
     device=await findAssetForJiraIdentifier(field.id,clean(payload?.deviceId||''));
     if(!device)throw new Error(`“${clean(payload?.deviceId||'')}” is not a device in Asset Manager. Choose a registered device.`);
     replacement=device.jiraIdentifier||device.name;
-    const check=checkDeviceId(replacement,compileDeviceIdPatterns(settings.deviceIdPatterns));
+    const check=checkDeviceId(replacement,compileDeviceIdPatterns(settings.deviceIdPatterns,settings.assetTypes),device.type||'');
     if(!check?.ok)throw new Error(`${replacement} does not pass the Device ID format rule (${check?.reason||'empty'}).`);
   }
   const clause=exactValueClause(field,value);

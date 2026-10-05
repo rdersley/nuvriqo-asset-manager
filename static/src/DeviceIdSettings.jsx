@@ -5,18 +5,20 @@ import { checkDeviceId, compileDeviceIdPatterns } from '../../src/device-id-rule
 const linesOf = (text) => String(text || '').split('\n').map((x) => x.trim()).filter(Boolean);
 
 // The Device ID format rule, with a box to try values against it before saving.
-export function DeviceIdFormat({ value, onChange, disabled }) {
+export function DeviceIdFormat({ value, onChange, disabled, assetTypes = [] }) {
   const [sample, setSample] = useState('');
+  const compiled = useMemo(() => { try { return compileDeviceIdPatterns(linesOf(value), assetTypes); } catch { return null; } }, [value, assetTypes]);
   const result = useMemo(() => {
-    try { return checkDeviceId(sample, compileDeviceIdPatterns(linesOf(value))); } catch { return { ok: false, reason: 'The format could not be read' }; }
-  }, [sample, value]);
+    return compiled ? checkDeviceId(sample, compiled) : { ok: false, reason: 'The format could not be read' };
+  }, [sample, compiled]);
+  const typed = (compiled || []).filter((c) => c.type);
   return (
     <label className="wide">Device ID format
-      <textarea rows="3" value={value} disabled={disabled} placeholder={'DEV####\nVPOS-*'} onChange={(e) => onChange(e.target.value)} />
-      <small>One pattern per line. <code>#</code> = digit, <code>@</code> = letter, <code>?</code> = any one character, <code>*</code> = anything; other characters must match exactly (capitals don't matter). The Jira scan only creates devices from values that match; everything else goes to Device ID clean-up in Data conflicts. Leave empty to accept any value with letters in it.</small>
+      <textarea rows="3" value={value} disabled={disabled} placeholder={'Tablet: TAB####\nvPOS: VPOS-*\nDEV####'} onChange={(e) => onChange(e.target.value)} />
+      <small>One pattern per line. <code>#</code> = digit, <code>@</code> = letter, <code>?</code> = any one character, <code>*</code> = anything; other characters must match exactly (capitals don't matter). Start a line with a device type from Asset types to make it that type's format (<code>Tablet: TAB####</code>): a new device found by the scan gets the type its Device ID matches. Lines without a type apply to every type. The Jira scan only creates devices from values that match one of the patterns; everything else goes to Device ID clean-up in Data conflicts. Leave empty to accept any value with letters in it.{typed.length ? ` Formats by type: ${[...new Set(typed.map((c) => c.type))].join(', ')}.` : ''}</small>
       <span style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
         <input aria-label="Try a value" placeholder="Try a value" value={sample} onChange={(e) => setSample(e.target.value)} style={{ maxWidth: 220 }} />
-        {sample.trim() && <small>{result?.ok ? '✓ Counts as a Device ID' : `✗ ${result?.reason || 'Empty'}`}</small>}
+        {sample.trim() && <small>{result?.ok ? `✓ Counts as a Device ID${result.type ? ` (${result.type})` : ''}` : `✗ ${result?.reason || 'Empty'}`}</small>}
       </span>
     </label>
   );
@@ -38,7 +40,7 @@ export async function runScanPreview(onProgress) {
   return {
     tickets, complete: !nextPageToken,
     registered: all.filter((f) => f.registered).length,
-    newIds: all.filter((f) => !f.registered).map((f) => f.identifier),
+    newIds: all.filter((f) => !f.registered).map((f) => (f.type ? `${f.identifier} (${f.type})` : f.identifier)),
     rejected: [...rejected.values()].sort((a, b) => b.tickets - a.tickets),
   };
 }
