@@ -122,3 +122,10 @@ test('Client and Customer columns import into the device client', async () => {
   assert.equal(a.client, 'RYR');
   assert.equal(b.client, 'EZY');
 });
+
+test('numbers Excel shortened to scientific notation are not imported', () => {
+  const rows = validateImportRows([{ name: 'GALAXY-1', serialNumber: '3.51633E+14' }, { name: 'GALAXY-2', serialNumber: '351633123456789' }, { name: '1.2E+10' }], []);
+  assert.match(rows[0]._error, /Serial Number 3\.51633E\+14 was shortened by Excel/);
+  assert.equal(rows[1]._error, '');
+  assert.match(rows[2]._error, /Device Name 1\.2E\+10/);
+});

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "test": "node --test src/importUtils.test.js"
+    "test": "node --test src/importUtils.test.js src/importRetry.test.mjs"
   },
   "dependencies": {
     "@forge/bridge": "^5.0.0",
