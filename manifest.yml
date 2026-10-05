@@ -87,6 +87,7 @@ modules:
     - key: ticket-status-device-sync
       function: status-sync
       events:
+        - avi:jira:created:issue
         - avi:jira:updated:issue
       filter:
         ignoreSelf: true

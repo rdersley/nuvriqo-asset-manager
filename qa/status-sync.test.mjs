@@ -179,3 +179,46 @@ test('saving configuration keeps valid replacement pairs only', async () => {
   const saved = store.get('settings:asset-manager').replacement;
   assert.deepEqual(saved, { enabled: true, projects: ['HW'], ticketStatus: 'Dispatched', deviceStatus: 'In Use', pairs: [HW.replacement.pairs[0]] });
 });
+
+// Device ID checked when a ticket is saved, so bad values reach the clean-up list before a scan.
+const review = (value) => store.get(`device-id-review:${Buffer.from(value.toLowerCase()).toString('base64url')}`);
+const withFormat = () => store.set('settings:asset-manager', { ...structuredClone(SETTINGS), jiraProjectKey: 'SD', assetTypes: ['Tablet'], jiraTypeField: { id: 'customfield_200' }, deviceIdPatterns: ['Tablet: TAB####'] });
+
+test('a new ticket with a bad Device ID goes onto the clean-up list', async () => {
+  withFormat();
+  issueFields = { project: { key: 'SD' }, customfield_100: 'R58M21ABC', customfield_200: { value: 'Tablet' } };
+  const result = await handler({ eventType: 'avi:jira:created:issue', issue: { key: 'SD-9' } });
+  assert.deepEqual(result.deviceIdRejected, ['R58M21ABC']);
+  const record = review('R58M21ABC');
+  assert.deepEqual([record.status, record.ticketCount, record.issueKeys, record.reason], ['open', 1, ['SD-9'], "Doesn't match the Tablet format (TAB####)"]);
+  await handler({ eventType: 'avi:jira:created:issue', issue: { key: 'SD-9' } });
+  assert.equal(review('R58M21ABC').ticketCount, 1, 'the same ticket is not counted twice');
+});
+
+test('editing the Device ID to a bad value is caught; a good value or another project is not', async () => {
+  withFormat();
+  const edit = (key) => ({ eventType: 'avi:jira:updated:issue', issue: { key }, changelog: { items: [{ fieldId: 'customfield_100', toString: 'x' }] } });
+  issueFields = { project: { key: 'SD' }, customfield_100: 'screen broken' };
+  await handler(edit('SD-10'));
+  assert.equal(review('screen broken').issueKeys[0], 'SD-10');
+  issueFields = { project: { key: 'SD' }, customfield_100: 'TAB0001' };
+  assert.deepEqual((await handler(edit('SD-11'))).deviceIdRejected, []);
+  issueFields = { project: { key: 'OTHER' }, customfield_100: 'junk value' };
+  await handler(edit('OTHER-1'));
+  assert.equal(review('junk value'), undefined);
+});
+
+test('an ignored value stays ignored when another ticket uses it', async () => {
+  withFormat();
+  store.set(`device-id-review:${Buffer.from('r58m21abc').toString('base64url')}`, { value: 'R58M21ABC', status: 'ignored', ticketCount: 3, issueKeys: ['SD-1'] });
+  issueFields = { project: { key: 'SD' }, customfield_100: 'R58M21ABC' };
+  await handler({ eventType: 'avi:jira:created:issue', issue: { key: 'SD-12' } });
+  assert.deepEqual([review('R58M21ABC').status, review('R58M21ABC').ticketCount], ['ignored', 4]);
+});
+
+test('edits to other fields do no Device ID work at all', async () => {
+  withFormat(); kvsOps = 0;
+  await handler({ eventType: 'avi:jira:updated:issue', issue: { key: 'SD-13' }, changelog: { items: [{ fieldId: 'summary', toString: 'x' }] } });
+  assert.equal(kvsOps, 0);
+  assert.equal(jiraCalls.length, 0);
+});
