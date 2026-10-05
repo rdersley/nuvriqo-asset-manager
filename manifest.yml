@@ -152,8 +152,8 @@ permissions:
   external:
     fetch:
       backend:
-        - '*.mobicontrol.cloud'
-        - '*.mobicontrolcloud.com'
+        - address: '*.mobicontrol.cloud'
+        - address: '*.mobicontrolcloud.com'
 
 app:
   runtime:
