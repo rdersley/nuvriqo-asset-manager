@@ -12,21 +12,6 @@ modules:
         - title: Reports
           route: reports
 
-  jira:adminPage:
-    - key: nuvriqo-internal-asset-operations
-      resource: crew-tracking
-      resolver:
-        function: crew-tracking
-      title: Internal Asset Operations
-      layout: blank
-      pages:
-        - title: Crew Tracking
-          route: crew-tracking
-        - title: Device Usage Reconciliation
-          route: device-usage
-        - title: SOTI Sync
-          route: soti
-
   jira:issuePanel:
     - key: nuvriqo-asset-issue-panel
       resource: issue-panel
@@ -85,28 +70,9 @@ modules:
         - customer
         - unlicensed
 
-  trigger:
-    - key: ticket-status-device-sync
-      function: status-sync
-      events:
-        - avi:jira:created:issue
-        - avi:jira:updated:issue
-      filter:
-        ignoreSelf: true
-
-  scheduledTrigger:
-    - key: portal-plus-snapshot
-      function: portal-plus-refresh
-      interval: hour
-    - key: soti-device-sync
-      function: soti-sync
-      interval: hour
-
   function:
     - key: resolver
       handler: index.handler
-    - key: soti-sync
-      handler: soti.scheduled
     - key: ticket-sync
       handler: ticket-sync.handler
     - key: issue-panel
@@ -115,12 +81,6 @@ modules:
       handler: device-split.handler
     - key: portal-assets
       handler: portal-assets.handler
-    - key: crew-tracking
-      handler: crew.handler
-    - key: portal-plus-refresh
-      handler: portal-plus-refresh.handler
-    - key: status-sync
-      handler: status-sync.handler
 
 resources:
   - key: main
@@ -133,29 +93,20 @@ resources:
     path: field-static/dist
   - key: portal-assets
     path: portal-static/dist
-  - key: crew-tracking
-    path: crew-static/dist
 
 permissions:
   scopes:
     - storage:app
     - read:jira-work
     - write:jira-work
-    - manage:jira-project
     - read:jira-user
     - read:user:jira
     - read:avatar:jira
-    - read:application-role:jira
-    - read:group:jira
     - read:organization:jira-service-management
-  # Read-only SOTI MobiControl sync (SOTI ONE, SOTI-hosted servers only).
-  external:
-    fetch:
-      backend:
-        - address: '*.mobicontrol.cloud'
-        - address: '*.mobicontrolcloud.com'
 
 app:
+  licensing:
+    enabled: true
   runtime:
     name: nodejs22.x
   id: ari:cloud:ecosystem::app/ffd70422-97fd-49bb-83ed-0dc607590642

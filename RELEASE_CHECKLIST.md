@@ -1,6 +1,6 @@
 # Nuvriqo Asset Manager — 1.0.0 Sign-off Gate
 
-Target: keep the release candidate on `0.9.x` until the exact candidate has passed automated validation, browser acceptance on the production-sized sandbox copy, internal operational checks and Marketplace packaging checks. Promote to `1.0.0` only after every release blocker below is green.
+Target: keep the release candidate on `0.9.x` until the exact candidate has passed automated validation, browser acceptance on the production-sized sandbox copy and Marketplace packaging checks. Promote to `1.0.0` only after every release blocker below is green.
 
 ## Public V1 scope
 
@@ -19,15 +19,9 @@ Target: keep the release candidate on `0.9.x` until the exact candidate has pass
 - JSM portal organisation device view.
 - Scale guards and batched cleanup for large sites.
 
-## Internal-only scope
+## Scope
 
-The internal development installation additionally contains:
-
-- Crew Tracking import/reporting.
-- Device Usage Reconciliation and internal device-status import.
-- Internal crew/device aliases and reconciliation storage.
-
-These modules must remain in `manifest.yml` for the internal environment but must not appear in `manifest.marketplace.yml` or in Marketplace listing copy/screenshots.
+This repository holds the Marketplace edition only. Organisation-specific tools (crew tracking, device usage reconciliation, SOTI sync, the Portal+ snapshot publisher) live in separate repositories and must not be added back here or appear in Marketplace listing copy/screenshots.
 
 ## Automated release gate
 
@@ -42,12 +36,11 @@ Run the complete CI workflow on the exact candidate after the last code change.
 - [ ] Device split UI build passes.
 - [ ] Customer portal UI build passes.
 - [ ] Reports UI build passes.
-- [ ] Internal Asset Operations UI build passes.
 - [ ] Marketplace manifest verification passes.
 - [ ] Forge lint passes.
-- [ ] Sandbox read-only Jira smoke tests pass.
+- [ ] Staging read-only Jira smoke tests pass on nuvriqo.atlassian.net.
 - [ ] Forge development deployment succeeds.
-- [ ] Sandbox install/upgrade succeeds.
+- [ ] Staging install/upgrade on nuvriqo.atlassian.net succeeds.
 - [ ] Post-deploy Jira smoke tests pass.
 
 ## Browser acceptance — release blockers
@@ -57,7 +50,7 @@ Run these in the installed development app, not just CI.
 1. **Startup / blank-screen protection** — `/overview` renders the Asset Manager UI within a few seconds. A delayed or failed Forge context lookup must not leave a blank Jira frame.
 2. **Navigation** — Overview, Assets, Imports, Reports and Configuration all open and the Asset Manager navigation remains usable.
 3. **Configuration** — Jira custom fields load; mapped fields can be saved; Configuration remains reachable even if Jira discovery or reporting fails.
-4. **Large-data behaviour** — opening Overview, Assets, Reports, issue panel, portal view and Internal Asset Operations does not produce Forge installation/execution-limit errors on the production-sized copy.
+4. **Large-data behaviour** — opening Overview, Assets, Reports, issue panel and portal view does not produce Forge installation/execution-limit errors on the production-sized copy.
 5. **Bad-import cleanup** — Remove Jira imports removes only automatically discovered Jira records in resumable batches, preserves manual/imported assets and pauses automatic discovery.
 6. **Device discovery** — a configured Device ID creates or matches exactly one asset; placeholders such as `.`, `-`, `N/A`, all-zero and obviously invalid identifiers are ignored.
 7. **Resumable scan** — Jira Device ID scanning can stop safely after a bounded batch and resume from stored progress without restarting or duplicating assets.
@@ -70,21 +63,12 @@ Run these in the installed development app, not just CI.
 14. **Safe deletion** — an asset with Jira relationships cannot be deleted until those relationships are cleared/unlinked.
 15. **Portal view** — a JSM customer can open the organisation-device view without gaining access to another organisation's devices.
 
-## Internal acceptance
-
-- [ ] Crew register import accepts the agreed internal spreadsheet format in paced/resumable batches.
-- [ ] Crew records retain email, location, aliases and assignment reference correctly.
-- [ ] Device Usage Reconciliation imports the internal status report without overwriting a conflicting current assignment.
-- [ ] Missing devices can be created safely from the internal status report.
-- [ ] Assignment mismatches are flagged for review.
-- [ ] Internal tools remain available only in the development/internal manifest.
-
 ## Marketplace packaging gate
 
 Atlassian currently reviews function, security, performance, support and branding for new Marketplace apps. The Marketplace edition must therefore meet all of the following before submission:
 
 - [ ] `npm run verify:marketplace` passes.
-- [ ] `manifest.marketplace.yml` contains no Internal Asset Operations, crew-import or vPOS modules/resources/terminology.
+- [ ] `manifest.yml` contains no Internal Asset Operations, crew-import or vPOS modules/resources/terminology.
 - [ ] Requested Forge scopes are limited to the public functionality that actually ships.
 - [ ] No external egress is required by V1 unless explicitly documented in the Privacy & Security tab.
 - [ ] Privacy policy, support contact, end-user terms/EULA and security answers are final and publicly reachable where required.
@@ -102,7 +86,7 @@ Only after every required item above is green:
 2. Run the full CI gate again on that exact commit.
 3. Create tag `v1.0.0` on the tested commit.
 4. Preserve that exact commit as the Marketplace release candidate.
-5. Deploy `manifest.marketplace.yml` to Forge production using the manual Marketplace release workflow.
+5. Deploy `manifest.yml` to Forge production using the manual Marketplace release workflow.
 6. Perform one final clean-site install/smoke test against production.
 7. Submit the Marketplace listing and record the submission/review ticket in the Nuvriqo submission pack.
 

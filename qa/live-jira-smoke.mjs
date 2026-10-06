@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-const site = process.env.FORGE_SITE || 'retailinmotion-sandbox1.atlassian.net';
+const site = process.env.FORGE_SITE || 'nuvriqo.atlassian.net';
 const email = process.env.FORGE_EMAIL;
 const token = process.env.FORGE_API_TOKEN;
 assert.ok(email && token, 'FORGE_EMAIL and FORGE_API_TOKEN are required for live Jira smoke tests.');

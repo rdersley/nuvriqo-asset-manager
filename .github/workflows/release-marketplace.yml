@@ -52,14 +52,7 @@ jobs:
           npm --prefix static test
           npm run qa:test
       - name: Build Marketplace UIs
-        run: npm run build:marketplace
-      - name: Switch to Marketplace-safe manifest
-        run: cp manifest.marketplace.yml manifest.yml
-      - name: Remove internal-only modules
-        # Forge lint checks every file in src/. The Portal+ publisher writes a project property,
-        # which needs manage:jira-project; only the internal manifest declares it. crew.js is the
-        # internal Crew Tracking backend (organisation-specific crew identity fields).
-        run: rm -f src/portal-plus-publisher.js src/portal-plus-refresh.js src/crew.js src/soti.js
+        run: npm run build
       - name: Forge lint Marketplace descriptor
         shell: bash
         run: |

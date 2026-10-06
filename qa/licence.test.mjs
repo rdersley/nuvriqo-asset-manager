@@ -59,7 +59,7 @@ test('Marketplace resolvers are all licence-wrapped', () => {
     const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
     assert.match(source, /licensedResolver\(new Resolver\(\)\)/, `${file} must use licensedResolver`);
   }
-  assert.match(fs.readFileSync(new URL('../manifest.marketplace.yml', import.meta.url), 'utf8'), /licensing:\s*\r?\n\s+enabled:\s*true/);
+  assert.match(fs.readFileSync(new URL('../manifest.yml', import.meta.url), 'utf8'), /licensing:\s*\r?\n\s+enabled:\s*true/);
 });
 
 test('UI helper recognises the Forge-wrapped licence error and shows the friendly message', async () => {
