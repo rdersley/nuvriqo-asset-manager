@@ -181,3 +181,14 @@ test('a scanned barcode value suggests the Device ID inside it', async () => {
   const { values } = await call('getDeviceIdReview');
   assert.deepEqual([values[0].value, values[0].suggestion.deviceId, values[0].suggestion.matchedBy], ['BP50=RYRBP24481^68:AA:D2:17:F5:97', 'RYRBP24481', 'Device ID inside the value']);
 });
+
+test('values the format has since been widened to accept leave the clean-up list', async () => {
+  await call('previewJiraScan');
+  assert.ok((await call('getDeviceIdReview')).values.some((v) => v.value === 'R58M21ABC'));
+  const settings = store.get('settings:asset-manager');
+  store.set('settings:asset-manager', { ...settings, deviceIdPatterns: [...(settings.deviceIdPatterns || []), 'R58M##@@@'] });
+  const after = await call('getDeviceIdReview');
+  assert.equal(after.values.some((v) => v.value === 'R58M21ABC'), false);
+  assert.equal(after.nowValid, 1);
+  assert.equal(after.values.some((v) => v.value === 'screen broken'), true, 'values that still fail stay');
+});

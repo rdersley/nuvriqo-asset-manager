@@ -22,6 +22,7 @@ export default function DeviceIdCleanup() {
       setValues(r?.values || []);
       setCounts({ ignored: r?.ignored || 0, fixed: r?.fixed || 0 });
       setNotes({ partial: Boolean(r?.suggestionsPartial), truncated: Boolean(r?.truncated) });
+      if (r?.nowValid) setMessage(`${r.nowValid} value${r.nowValid === 1 ? '' : 's'} now match${r.nowValid === 1 ? 'es' : ''} the Device ID format and ${r.nowValid === 1 ? 'was' : 'were'} removed from the list. Run the Jira scan to add them as devices.`);
       setChosen(Object.fromEntries((r?.values || []).map((v) => [v.value, v.suggestion?.deviceId || ''])));
     } catch (e) {
       setMessage(e?.message || 'Could not load the Device ID clean-up list.');
