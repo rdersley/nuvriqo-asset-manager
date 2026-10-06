@@ -167,3 +167,11 @@ test('bulk review leaves kept conflicts and tickets older than the date alone', 
   await resolve('A1', 'keep');
   assert.equal((await bulkAll({ minTickets: 1 })).candidates.length, 0);
 });
+
+test('the Jira scan saves each device\'s fault figures for Reports', async () => {
+  store.set('settings:asset-manager', { ...store.get('settings:asset-manager'), jiraFaultField: { id: 'customfield_300', name: 'Fault' } });
+  issues = [{ ...ticket('OPS-9', 'DEV100', 'ANNA1', '2026-10-03T00:00:00Z'), fields: { ...ticket('OPS-9', 'DEV100', 'ANNA1', '2026-10-03T00:00:00Z').fields, customfield_300: 'Screen cracked', status: { name: 'Open', statusCategory: { key: 'new' } } } }, ticket('OPS-8', 'DEV100', 'ANNA1', '2026-09-20T00:00:00Z')];
+  await scan();
+  const f = asset('A1').faultSummary;
+  assert.deepEqual([f.total, f.open, f.involved, f.latestFaultKey, f.latestFault], [1, 1, 2, 'OPS-9', 'Screen cracked']);
+});

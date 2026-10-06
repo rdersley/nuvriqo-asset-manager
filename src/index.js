@@ -74,6 +74,17 @@ function normaliseAsset(input = {}, existing = {}) {
 }
 async function addHistory(assetId, event) { const timestamp = now(); await kvs.set(`${HISTORY_PREFIX}${assetId}:${timestamp}:${Math.random().toString(36).slice(2, 7)}`, { assetId, timestamp, ...actorFields(), ...event }); }
 function faultHistoryKey(assetId,ticket){const label=clean(ticket?.fault||'');if(!label)return'';const fingerprint=createHash('sha256').update(`${ticket?.key||''}:${normaliseName(label)}`).digest('hex').slice(0,16);return `${FAULT_HISTORY_PREFIX}${assetId}:${ticket?.key||'unknown'}:${fingerprint}`;}
+// A device's fault figures for Reports, from its tickets: the same counting as getAssetReport
+// (faults are primary tickets with the Device Fault field filled in). Stored on the device as
+// faultSummary by the Jira scan and the device page, so Reports reads them instead of searching Jira.
+function faultSummaryFrom(tickets){
+  const byKey=new Map();for(const t of safeArray(tickets)){if(!t?.key)continue;const current=byKey.get(t.key);if(!current||t.relation==='primary')byKey.set(t.key,t);}
+  const all=[...byKey.values()].sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
+  const primary=all.filter(t=>t.relation==='primary');const faults=primary.filter(t=>clean(t.fault||''));const open=faults.filter(t=>!t.resolved&&t.statusCategory!=='done').length;const latest=faults[0]||null;
+  return{total:faults.length,open,resolved:faults.length-open,related:all.filter(t=>t.relation==='related').length,involved:all.length,lastFault:latest?.created||'',latestFaultKey:latest?.key||'',latestFault:latest?clean(latest.fault):'',updatedAt:now()};
+}
+const sameFaultSummary=(a,b)=>Boolean(a&&b)&&['total','open','resolved','related','involved','lastFault','latestFaultKey','latestFault'].every(k=>(a[k]??'')===(b[k]??''));
+async function storeFaultSummary(asset,tickets){if(!asset?.id)return;const summary=faultSummaryFrom(tickets);if(sameFaultSummary(asset.faultSummary,summary))return;const current=await kvs.get(`${ASSET_PREFIX}${asset.id}`);if(current)await kvs.set(`${ASSET_PREFIX}${asset.id}`,{...current,faultSummary:summary});}
 // Adds the faults of these tickets that the ledger doesn't have yet; entries already there are
 // left as first recorded.
 async function recordMissingFaultHistory(asset,tickets){for(const ticket of safeArray(tickets)){const key=ticket?.relation==='primary'?faultHistoryKey(asset?.id,ticket):'';if(key&&!(await kvs.get(key)))await recordFaultHistory(asset,ticket,null);}}
@@ -230,7 +241,7 @@ async function recordRejectedDeviceIds(rejected,runId){
   }));
 }
 async function findAssetForJiraIdentifier(fieldId,identifier){const deterministicId=makeJiraAssetId(fieldId,identifier);let asset=await kvs.get(`${ASSET_PREFIX}${deterministicId}`);if(asset)return asset;const indexed=await kvs.get(nameIndexKey(identifier));if(indexed?.assetId)asset=await kvs.get(`${ASSET_PREFIX}${indexed.assetId}`);return asset||null;}
-async function recordScannedTicketsForAsset(asset,issues,field,settings,runId){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;const client=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraClientField?.id);if(client&&asset.jiraClientSyncRunId!==runId)asset=await saveOneAsset({...asset,client,jiraClientSyncRunId:runId},'jira-sync');for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id,settings.jiraCrewCodeField?.id,settings.jiraLocationField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});if(relation==='primary'&&ticket.fault)await recordMissingFaultHistory(asset,[ticket]);}}
+async function recordScannedTicketsForAsset(asset,issues,field,settings,runId){if(!asset?.id||!field?.id)return;const identifier=asset.jiraIdentifier||asset.name||'';if(!validIdentifier(identifier))return;const client=latestFieldValueForIdentifier(issues,field.id,identifier,settings.jiraClientField?.id);if(client&&asset.jiraClientSyncRunId!==runId)asset=await saveOneAsset({...asset,client,jiraClientSyncRunId:runId},'jira-sync');for(const issue of issues){let relation='';if(issueMatchesIdentifier(issue,field.id,identifier))relation='primary';else if(issueMatchesRelatedIdentifier(issue,settings.jiraRelatedAssetField?.id,identifier))relation='related';if(!relation)continue;const ticket=ticketFields(issue,relation,settings.jiraFaultField?.id,settings.jiraCrewCodeField?.id,settings.jiraLocationField?.id);await kvs.set(`${ASSET_TICKET_PREFIX}${asset.id}:${issue.key}:${relation}`,{assetId:asset.id,...ticket,recordedAt:now()});if(relation==='primary'&&ticket.fault)await recordMissingFaultHistory(asset,[ticket]);}const recorded=(await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${asset.id}:`,1000)).filter(t=>ticketMatchesConfiguredProject(t,settings));await storeFaultSummary(asset,recorded);}
 async function syncAssetsFromJira({restart=false}={}){
   const previous=await kvs.get(SYNC_KEY);
   let progress=await kvs.get(SYNC_PROGRESS_KEY);
@@ -696,12 +707,22 @@ resolver.define('searchUsers',async({payload})=>{const q=clean(payload?.query||'
 resolver.define('getAssetTickets',async({payload})=>{const assetId=clean(payload?.assetId||'');if(!assetId)return[];const settings=await getSettingsValue();const recorded=(await queryAllByPrefix(`${ASSET_TICKET_PREFIX}${assetId}:`)).filter(ticket=>ticketMatchesConfiguredProject(ticket,settings));const links=await queryAllByPrefix(LINK_PREFIX);const legacyKeys=links.filter(l=>l?.assetId===assetId&&ticketMatchesConfiguredProject({key:l.issueKey},settings)).map(l=>l.issueKey).filter(Boolean);
   // Live, targeted search first: the tickets recorded by sync are never pruned, so they go stale when a
   // ticket's device changes. Fall back to them only when Jira cannot be searched.
-  try{const tickets=await searchAssetTickets(assetId,legacyKeys);const asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);if(asset)await recordMissingFaultHistory(asset,tickets);return tickets;}catch{}
+  try{const tickets=await searchAssetTickets(assetId,legacyKeys);const asset=await kvs.get(`${ASSET_PREFIX}${assetId}`);if(asset){await recordMissingFaultHistory(asset,tickets);await storeFaultSummary(asset,tickets);}return tickets;}catch{}
   const byKey=new Map();for(const ticket of recorded){const current=byKey.get(ticket.key);if(!current||ticket.relation==='primary')byKey.set(ticket.key,ticket);}for(const key of legacyKeys)if(!byKey.has(key))byKey.set(key,{key,relation:'linked'});return [...byKey.values()].sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));});
 // Report rows for one batch of assets (the UI pages through the register in batches of
 // REPORT_BATCH). Tickets come from a targeted search for these assets' identifiers, in
 // chunks so each JQL stays small. `truncated` means some tickets may be missing.
 const REPORT_BATCH=100,REPORT_IDENTIFIER_CHUNK=50;
+// Reports: up to 2,000 devices per call, slimmed to what the Reports screens use, each with the
+// fault figures saved by the Jira scan (faultSummary). No Jira search, so a large register loads
+// in a few calls. Devices the scan hasn't reached yet have no faultSummary.
+const REPORT_PAGE_KVS_PAGES=20;
+resolver.define('getReportPage',async({payload})=>{
+  let cursor=clean(payload?.cursor||'')||null,pages=0;const items=[];
+  do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();items.push(...safeArray(page.results).map(r=>r.value).filter(Boolean));cursor=page.nextCursor||null;pages+=1;}while(cursor&&pages<REPORT_PAGE_KVS_PAGES);
+  const pick=(a)=>({id:a.id,name:a.name||'',jiraIdentifier:a.jiraIdentifier||'',type:a.type||'',manufacturer:a.manufacturer||'',model:a.model||'',serialNumber:a.serialNumber||'',assigneeName:a.assigneeName||'',crewCode:a.crewCode||'',status:a.status||'',location:a.location||'',client:a.client||'',purchaseDate:a.purchaseDate||'',warrantyExpiry:a.warrantyExpiry||'',assignedAt:a.assignedAt||'',faultSummary:a.faultSummary||null});
+  return{items:items.map(pick),nextCursor:cursor};
+});
 resolver.define('getAssetReport',async({payload}={})=>{
   const ids=[...new Set(safeArray(payload?.assetIds).map(clean).filter(Boolean))];
   // The asset list's Fault column reads only; the Reports screen records fault history.

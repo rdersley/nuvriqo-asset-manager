@@ -191,3 +191,20 @@ test('opening a device records its faults in the ledger, once', async () => {
   await call(main, 'getAssetTickets', { assetId: 'G1' });
   assert.equal(store.get(key).firstSeen, '2026-01-01T00:00:00.000Z', 'not rewritten');
 });
+
+test('opening a device saves its fault figures, which Reports reads without searching Jira', async () => {
+  store.set('settings:asset-manager', { ...SETTINGS, jiraFaultField: { id: 'customfield_200', name: 'Fault' } });
+  store.set('asset:H1', { id: 'H1', name: 'Tablet H', jiraIdentifier: 'RYR_H' });
+  searchHandler = () => ({ issues: [
+    { ...issue('SD-21', 'RYR_H'), fields: { ...issue('SD-21', 'RYR_H').fields, customfield_200: 'Faulty Battery', created: '2026-09-02T00:00:00.000Z' } },
+    { ...issue('SD-20', 'RYR_H'), fields: { ...issue('SD-20', 'RYR_H').fields, created: '2026-09-01T00:00:00.000Z' } }
+  ] });
+  await call(main, 'getAssetTickets', { assetId: 'H1' });
+  const f = store.get('asset:H1').faultSummary;
+  assert.deepEqual([f.total, f.involved, f.latestFaultKey, f.latestFault], [1, 2, 'SD-21', 'Faulty Battery']);
+  searchHandler = () => { throw new Error('Reports must not search Jira'); };
+  const page = await call(main, 'getReportPage', {});
+  const row = page.items.find((a) => a.id === 'H1');
+  assert.equal(row.faultSummary.total, 1);
+  assert.equal(page.nextCursor, null);
+});
