@@ -4,10 +4,6 @@ import { invoke } from './invoke.js';
 const BATCH = 100;
 // Kept low: Forge rate-limits invocations per installation.
 const CONCURRENCY = 2;
-// Register pages of 500 (five KVS pages per invocation); 80 pages = 40,000 assets
-// before a report is marked partial.
-const ASSET_PAGE = 500;
-const MAX_ASSET_PAGES = 80;
 
 // Runs getAssetReport for each batch with a few calls in flight. A failed or truncated
 // batch marks the result partial instead of failing the whole report.
@@ -39,26 +35,33 @@ export async function loadReportRows(assets) {
   return reportRowsFor(batches, undefined, { recordHistory: false });
 }
 
-// Every asset in the register plus its report row, paged so no single Forge call
-// reads too much. `partial` is true if the register or any Jira search was cut short.
+// A report row in getAssetReport's shape, from the fault figures the Jira scan saved on the
+// device. Null when the scan hasn't reached the device yet.
+export function reportRowFromSummary(asset) {
+  const f = asset?.faultSummary;
+  if (!f) return null;
+  return {
+    assetId: asset.id, name: asset.name, type: asset.type, status: asset.status, assigneeName: asset.assigneeName || asset.crewCode || '',
+    total: f.total || 0, open: f.open || 0, resolved: f.resolved || 0, related: f.related || 0, involved: f.involved || 0, lastFault: f.lastFault || '',
+    latestFault: f.latestFaultKey ? { key: f.latestFaultKey, fault: f.latestFault || '', summary: '' } : null, error: false
+  };
+}
+
+// Every asset in the register with its report row, read from the fault figures saved by the Jira
+// scan: about one call per 2,000 devices and no Jira search. `unscanned` counts devices with no
+// figures yet (run the Jira scan); `partial` is true if the register was cut short.
+const MAX_REPORT_PAGES = 50;
 export async function loadFullReport(onProgress) {
   const assets = [];
   let cursor = null;
   let pages = 0;
   do {
-    const page = await invoke('listAssetsPage', { cursor, limit: ASSET_PAGE, maxScanPages: ASSET_PAGE / 100 });
+    const page = await invoke('getReportPage', { cursor });
     assets.push(...(page?.items || []));
     cursor = page?.nextCursor || null;
     pages += 1;
-    onProgress?.(`Loading assets… ${assets.length.toLocaleString()} so far`);
-  } while (cursor && pages < MAX_ASSET_PAGES);
-
-  const batches = [];
-  for (let i = 0; i < assets.length; i += BATCH) batches.push(assets.slice(i, i + BATCH));
-  let matched = 0;
-  const { rows, partial } = await reportRowsFor(batches, (count) => {
-    matched += count;
-    onProgress?.(`Matching Jira tickets… ${matched.toLocaleString()} of ${assets.length.toLocaleString()} assets`);
-  });
-  return { assets, reports: rows, partial: partial || Boolean(cursor) };
+    onProgress?.(`Loading devices… ${assets.length.toLocaleString()} so far`);
+  } while (cursor && pages < MAX_REPORT_PAGES);
+  const reports = assets.map(reportRowFromSummary).filter(Boolean);
+  return { assets, reports, unscanned: assets.length - reports.length, partial: Boolean(cursor) };
 }
