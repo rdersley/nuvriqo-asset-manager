@@ -39,6 +39,8 @@ const FAULT_HISTORY_PREFIX = 'fault-history:';
 const HOLDER_CONFLICT_PREFIX = 'holder-conflict:';
 const SETTINGS_KEY = 'settings:asset-manager';
 const SYNC_KEY = 'sync:asset-manager:jira-field';
+// Raised when the saved fault figures gain a field (2: repeat faults), so Reports asks for a new scan.
+const FAULT_SUMMARY_VERSION = 2;
 const SYNC_PROGRESS_KEY = 'sync-progress:asset-manager:jira-field';
 const SYNC_JIRA_PAGE_SIZE = 25;
 
@@ -273,7 +275,7 @@ async function syncAssetsFromJira({restart=false}={}){
   }
   await addNewAssetTypes(types);
   progress={...progress,nextPageToken:page.nextPageToken,issuesScanned:progress.issuesScanned+issues.length,discovered:progress.discovered+batchDiscovered,created:progress.created+batchCreated,matched:progress.matched+batchMatched,ignored:progress.ignored+ignored,conflicts:(progress.conflicts||0)+batchConflicts};
-  const complete=!page.nextPageToken;const processed=progress.created+progress.matched;const result={timestamp:now(),field,issuesScanned:progress.issuesScanned,discovered:progress.discovered,processed,created:progress.created,matched:progress.matched,ignored:progress.ignored,reconciled:progress.reconciled,conflicts:progress.conflicts||0,complete};if(complete){await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);}else await kvs.set(SYNC_PROGRESS_KEY,progress);return result;
+  const complete=!page.nextPageToken;const processed=progress.created+progress.matched;const result={timestamp:now(),...(complete?{faultSummaryVersion:FAULT_SUMMARY_VERSION}:{}),field,issuesScanned:progress.issuesScanned,discovered:progress.discovered,processed,created:progress.created,matched:progress.matched,ignored:progress.ignored,reconciled:progress.reconciled,conflicts:progress.conflicts||0,complete};if(complete){await kvs.set(SYNC_KEY,result);await kvs.delete(SYNC_PROGRESS_KEY);}else await kvs.set(SYNC_PROGRESS_KEY,progress);return result;
 }
 // Tickets for one device, including identifiers it had before a CSV merge
 // (jiraAliases). `truncated` means the result may be incomplete.
@@ -720,11 +722,15 @@ const REPORT_BATCH=100,REPORT_IDENTIFIER_CHUNK=50;
 // fault figures saved by the Jira scan (faultSummary). No Jira search, so a large register loads
 // in a few calls. Devices the scan hasn't reached yet have no faultSummary.
 const REPORT_PAGE_KVS_PAGES=20;
+// A Jira scan finished since repeat faults were counted has saved figures for every device with a
+// ticket, so a device without figures has no tickets. The first page says whether one has.
+
 resolver.define('getReportPage',async({payload})=>{
   let cursor=clean(payload?.cursor||'')||null,pages=0;const items=[];
   do{let q=kvs.query().where('key',WhereConditions.beginsWith(ASSET_PREFIX)).limit(100);if(cursor)q=q.cursor(cursor);const page=await q.getMany();items.push(...safeArray(page.results).map(r=>r.value).filter(Boolean));cursor=page.nextCursor||null;pages+=1;}while(cursor&&pages<REPORT_PAGE_KVS_PAGES);
   const pick=(a)=>({id:a.id,name:a.name||'',jiraIdentifier:a.jiraIdentifier||'',type:a.type||'',manufacturer:a.manufacturer||'',model:a.model||'',serialNumber:a.serialNumber||'',assigneeName:a.assigneeName||'',crewCode:a.crewCode||'',status:a.status||'',location:a.location||'',client:a.client||'',purchaseDate:a.purchaseDate||'',warrantyExpiry:a.warrantyExpiry||'',assignedAt:a.assignedAt||'',faultSummary:a.faultSummary||null});
-  return{items:items.map(pick),nextCursor:cursor};
+  const first=!clean(payload?.cursor||'');const last=first?await kvs.get(SYNC_KEY):null;
+  return{items:items.map(pick),nextCursor:cursor,...(first?{scan:{complete:Boolean(last?.complete&&last?.faultSummaryVersion>=FAULT_SUMMARY_VERSION),timestamp:last?.timestamp||''}}:{})};
 });
 resolver.define('getAssetReport',async({payload}={})=>{
   const ids=[...new Set(safeArray(payload?.assetIds).map(clean).filter(Boolean))];
