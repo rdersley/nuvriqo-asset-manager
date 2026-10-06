@@ -208,3 +208,17 @@ test('opening a device saves its fault figures, which Reports reads without sear
   assert.equal(row.faultSummary.total, 1);
   assert.equal(page.nextCursor, null);
 });
+
+test('Reports learns when a full Jira scan has saved figures, so devices without them have no tickets', async () => {
+  store.set('asset:N1', { id: 'N1', name: 'RYR_N' });
+  store.set('sync:asset-manager:jira-field', { complete: true, timestamp: '2026-09-01T00:00:00.000Z' });
+  assert.equal((await call(main, 'getReportPage', {})).scan.complete, false, 'a scan from before repeat faults were counted');
+  searchHandler = () => ({ issues: [issue('SD-30', 'RYR_M')] });
+  const result = await call(main, 'syncAssetsFromJira', { restart: true });
+  assert.equal(result.complete, true);
+  const page = await call(main, 'getReportPage', {});
+  assert.equal(page.scan.complete, true);
+  assert.ok(page.scan.timestamp);
+  assert.equal(page.items.find((a) => a.id === 'N1').faultSummary, null);
+  assert.equal((await call(main, 'getReportPage', { cursor: '0' })).scan, undefined, 'only the first page says');
+});

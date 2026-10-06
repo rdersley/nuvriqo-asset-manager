@@ -49,19 +49,40 @@ export function reportRowFromSummary(asset) {
 
 // Every asset in the register with its report row, read from the fault figures saved by the Jira
 // scan: about one call per 2,000 devices and no Jira search. `unscanned` counts devices with no
-// figures yet (run the Jira scan); `partial` is true if the register was cut short.
+// figures yet (run the Jira scan), `lastScan` when the last full scan finished; `partial` is
+// true if the register was cut short.
 const MAX_REPORT_PAGES = 50;
 export async function loadFullReport(onProgress) {
   const assets = [];
   let cursor = null;
   let pages = 0;
+  let scan = null;
   do {
     const page = await invoke('getReportPage', { cursor });
+    if (page?.scan) scan = page.scan;
     assets.push(...(page?.items || []));
     cursor = page?.nextCursor || null;
     pages += 1;
     onProgress?.(`Loading devices… ${assets.length.toLocaleString()} so far`);
   } while (cursor && pages < MAX_REPORT_PAGES);
-  const reports = assets.map(reportRowFromSummary).filter(Boolean);
-  return { assets, reports, unscanned: assets.length - reports.length, partial: Boolean(cursor) };
+  // Once a full Jira scan has finished (since repeat faults were counted), every device with a
+  // ticket has figures, so one without has no tickets. Until then they need the scan to run.
+  const scanned = Boolean(scan?.complete);
+  const noTickets = { total: 0, open: 0, resolved: 0, related: 0, involved: 0, lastFault: '', repeats: [] };
+  const reports = assets.map((a) => reportRowFromSummary(scanned && !a.faultSummary ? { ...a, faultSummary: noTickets } : a)).filter(Boolean);
+  const unscanned = scanned ? 0 : assets.filter((a) => !Array.isArray(a.faultSummary?.repeats)).length;
+  return { assets, reports, unscanned, lastScan: scan?.timestamp || '', partial: Boolean(cursor) };
+}
+
+// One row per device and fault that came up at least `min` times (the same Device Fault value,
+// ignoring case and spacing), most times first.
+export function repeatFaultRows(assets = [], min = 2) {
+  const rows = [];
+  for (const a of assets) {
+    for (const r of a?.faultSummary?.repeats || []) {
+      if (r.count < min) continue;
+      rows.push({ assetId: a.id, name: a.name || '', deviceId: a.jiraIdentifier || a.name || '', type: a.type || '', holder: a.assigneeName || a.crewCode || '', location: a.location || '', fault: r.fault, count: r.count, open: r.open || 0, first: r.first || '', last: r.last || '', keys: r.keys || [] });
+    }
+  }
+  return rows.sort((x, y) => y.count - x.count || String(y.last).localeCompare(String(x.last)) || x.name.localeCompare(y.name));
 }
