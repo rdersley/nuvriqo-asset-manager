@@ -3,6 +3,7 @@ import { router } from '@forge/bridge';
 import { invoke } from './invoke.js';
 import { downloadCsv } from '../../shared/csv.js';
 import DeviceIdCleanup from './DeviceIdCleanup';
+import DeviceTimeline from './DeviceTimeline';
 
 const formatDate = (v) => (v ? new Date(v).toLocaleDateString() : '—');
 
@@ -15,6 +16,7 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState('');
   const [message, setMessage] = useState('');
+  const [open, setOpen] = useState('');
 
   async function load() {
     setLoading(true);
@@ -82,8 +84,9 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
             <tbody>
               {!loading && !conflicts.length && <tr><td colSpan="6">No holder conflicts. Run the Jira scan from Configuration to check for new ones.</td></tr>}
               {conflicts.map((c) => (
-                <tr key={c.assetId} style={{ cursor: 'default' }}>
-                  <td><button className="issue-link" onClick={() => onOpenAsset?.(c.assetId)}><strong>{c.deviceName}</strong></button>{c.deviceId && c.deviceId !== c.deviceName && <small style={{ display: 'block' }}>{c.deviceId}</small>}</td>
+                <React.Fragment key={c.assetId}>
+                <tr style={{ cursor: 'default' }}>
+                  <td><button className="issue-link" style={{ whiteSpace: 'nowrap' }} aria-expanded={open === c.assetId} onClick={() => setOpen(open === c.assetId ? '' : c.assetId)}><strong>{c.deviceName}</strong> {open === c.assetId ? '▴' : '▾'}</button>{c.deviceId && c.deviceId !== c.deviceName && <small style={{ display: 'block' }}>{c.deviceId}</small>}</td>
                   <td>{c.currentHolder || 'Unassigned'}{c.currentCrewCode && c.currentCrewCode !== c.currentHolder && <small style={{ display: 'block' }}>{c.currentCrewCode}</small>}</td>
                   <td>{c.ticketHolder}{c.ticketCrewCode && c.ticketCrewCode !== c.ticketHolder && <small style={{ display: 'block' }}>{c.ticketCrewCode}</small>}</td>
                   <td>{c.issueKey ? <button className="issue-link" onClick={() => router.open(`/browse/${c.issueKey}`)}>{c.issueKey}</button> : '—'}{c.issueSummary && <small style={{ display: 'block' }}>{c.issueSummary}</small>}{c.issueCreated && <small style={{ display: 'block' }}>Raised {formatDate(c.issueCreated)}</small>}</td>
@@ -95,6 +98,14 @@ export default function DataConflicts({ onBack, onOpenAsset, onChanged }) {
                     </div>
                   </td>
                 </tr>
+                {open === c.assetId && <tr style={{ cursor: 'default' }}><td colSpan="6" style={{ background: 'var(--surface-sunken, #f7f8f9)' }}>
+                  <DevicePeek assetId={c.assetId} onOpenAsset={onOpenAsset} onClose={() => setOpen('')}
+                    actions={<>
+                      <button className="primary" disabled={Boolean(working)} onClick={() => { setOpen(''); resolve(c, 'accept'); }}>{`Use ${c.ticketHolder}`}</button>
+                      <button className="secondary" disabled={Boolean(working)} onClick={() => { setOpen(''); resolve(c, 'keep'); }}>Keep {c.currentHolder || 'current'}</button>
+                    </>} />
+                </td></tr>}
+                </React.Fragment>
               ))}
             </tbody>
           </table>
@@ -163,6 +174,33 @@ function BulkHolderReview({ onOpenAsset, onDone }) {
           <td>{c.tickets} tickets in a row, {formatDate(c.since)} – {formatDate(c.until)}<small style={{ display: 'block' }}>{c.issueKeys.join(', ')}</small></td>
         </tr>)}</tbody>
       </table>{preview.candidates.length > 100 && <small>Showing 100 of {preview.candidates.length}; export the preview for the full list.</small>}</div>}
+    </div>
+  );
+}
+
+// A device's details and holder timeline, opened in place under its row so the list keeps its
+// position. "Open device page" still goes to the full page.
+function DevicePeek({ assetId, onOpenAsset, onClose, actions }) {
+  const [asset, setAsset] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { invoke('getAsset', { id: assetId }).then((a) => (a ? setAsset(a) : setError('This device no longer exists.'))).catch((e) => setError(e?.message || 'Could not load the device.')); }, [assetId]);
+  const details = asset ? [['Device ID', asset.jiraIdentifier], ['Type', asset.type], ['Model', [asset.manufacturer, asset.model].filter(Boolean).join(' ')], ['Serial number', asset.serialNumber], ['Holder', asset.assigneeName || asset.crewCode || 'Unassigned'], ['Assignment reference', asset.crewCode], ['Assigned since', asset.assignedAt ? formatDate(asset.assignedAt) : ''], ['Status', asset.status], ['Location', asset.location], ['Client', asset.client], ['SOTI last check-in', asset.soti?.lastCheckIn ? formatDate(asset.soti.lastCheckIn) : '']] : [];
+  return (
+    <div style={{ padding: '8px 4px' }}>
+      <div className="actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        <strong>{asset?.name || 'Device'}</strong>
+        <div className="actions" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {actions}
+          <button className="secondary" onClick={() => onOpenAsset?.(assetId)}>Open device page</button>
+          <button className="secondary" onClick={onClose}>Close</button>
+        </div>
+      </div>
+      {error && <div className="notice">{error}</div>}
+      {!asset && !error && <div className="empty-small">Loading device…</div>}
+      {asset && <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '4px 16px', margin: '0 0 12px' }}>
+        {details.map(([k, v]) => <div key={k}><dt style={{ fontSize: 12, color: 'var(--text-subtle, #626f86)' }}>{k}</dt><dd style={{ margin: 0 }}>{v || '—'}</dd></div>)}
+      </dl>}
+      {asset && <DeviceTimeline assetId={assetId} />}
     </div>
   );
 }
