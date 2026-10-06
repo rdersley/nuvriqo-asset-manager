@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from './invoke.js';
 import { isBusyFailure } from './importRetry.js';
 import { duplicateTargets, importTargets, mapImportRows, mappingToRemember, readImportTable, suggestMapping, validateImportRows } from './importUtils';
@@ -38,6 +38,7 @@ export default function ImportDialog({ onImport, onClose }) {
     setBusy(true);
     setError('');
     setOutcome('');
+    setProgress(`Reading ${file.name}…`);
     try {
       const read = await readImportTable(file);
       const suggested = suggestMapping(read.headers, customFields, loadRemembered());
@@ -55,6 +56,7 @@ export default function ImportDialog({ onImport, onClose }) {
       setError(e?.message || 'Could not read this file.');
     } finally {
       setBusy(false);
+      setProgress('');
     }
   }
 
@@ -72,6 +74,7 @@ export default function ImportDialog({ onImport, onClose }) {
       setError(e?.message || 'Could not check the rows.');
     } finally {
       setBusy(false);
+      setProgress('');
     }
   }
 
@@ -80,40 +83,47 @@ export default function ImportDialog({ onImport, onClose }) {
     setMappingChanged(true);
   }
 
+  // Rows show straight away. The first 200 are then compared with the register in the
+  // background (an informational preview: the import does the same matching itself), so a busy
+  // Jira never holds up the window. A newer check or starting the import discards a stale preview.
+  const previewRun = useRef(0);
   async function checkRows(read, currentMapping) {
     setMappingChanged(false);
-    const parsed = mapImportRows(read, currentMapping);
-    const checked = validateImportRows(parsed);
-    let reconciled=checked;
-    const valid=checked.filter((row)=>!row._error);
-    if(valid.length){
-      const previewLimit=Math.min(valid.length,200);
-      const previewRows=valid.slice(0,previewLimit);
-      const matches=[];
-      const previewBatchSize=50;
-      for(let i=0;i<previewRows.length;i+=previewBatchSize){
-        const batch=previewRows.slice(i,i+previewBatchSize).map(({_row,_error,...asset})=>asset);
-        const result=await invoke('previewAssetImportReconciliation',{assets:batch});
-        matches.push(...(result||[]));
-      }
-      let matchIndex=0;
-      let validIndex=0;
-      reconciled=checked.map((row)=>{
-        if(row._error)return row;
-        const isPreviewed=validIndex<previewLimit;
-        validIndex+=1;
-        if(!isPreviewed)return {...row,_reconcile:{action:'deferred',message:'Will be reconciled safely during import.'}};
-        const match=matches?.[matchIndex++]||null;
-        return match?.action==='review'?{...row,_error:match.message,_reconcile:match}:{...row,_reconcile:match};
-      });
-      setPreview(matches||[]);
-    }else setPreview([]);
-    setRows(reconciled);
+    const checked = validateImportRows(mapImportRows(read, currentMapping));
+    const run = ++previewRun.current;
+    const previewRows = checked.filter((row) => !row._error).slice(0, 200);
+    const previewed = new Set(previewRows.map((row) => row._row));
+    setRows(checked.map((row) => (row._error ? row : { ...row, _reconcile: previewed.has(row._row) ? { action: 'checking', message: 'Checking against the register…' } : { action: 'deferred', message: 'Will be reconciled safely during import.' } })));
+    setPreview([]);
     if (!checked.length) setError('No asset rows were found in this file.');
+    if (previewRows.length) previewInBackground(previewRows, run);
+  }
+
+  async function previewInBackground(previewRows, run) {
+    const matches = [];
+    try {
+      for (let i = 0; i < previewRows.length; i += 50) {
+        const batch = previewRows.slice(i, i + 50);
+        const result = await invoke('previewAssetImportReconciliation', { assets: batch.map(({ _row, _error, _reconcile, ...asset }) => asset) });
+        if (previewRun.current !== run) return;
+        const byRow = new Map(batch.map((row, j) => [row._row, (result || [])[j]]).filter(([, m]) => m));
+        matches.push(...byRow.values());
+        setRows((current) => current.map((row) => {
+          const match = !row._error && byRow.get(row._row);
+          if (!match) return row;
+          return match.action === 'review' ? { ...row, _error: match.message, _reconcile: match } : { ...row, _reconcile: match };
+        }));
+        setPreview([...matches]);
+      }
+    } catch {
+      if (previewRun.current !== run) return;
+      setRows((current) => current.map((row) => (row._reconcile?.action === 'checking' ? { ...row, _reconcile: { action: 'deferred', message: 'Will be reconciled safely during import.' } } : row)));
+    }
   }
 
   async function runImport() {
     if (!validRows.length || mappingChanged) return;
+    previewRun.current += 1;
     const total = validRows.length;
     setBusy(true);
     setError('');
@@ -193,7 +203,7 @@ export default function ImportDialog({ onImport, onClose }) {
             <thead><tr><th>Row</th><th>Device Name</th><th>Device ID</th><th>Serial</th><th>Type</th><th>Assignment Reference</th><th>Holder</th><th>Result</th></tr></thead>
             <tbody>{rows.slice(0, 200).map((row) => <tr key={`${row._row}-${row.name}`}>
               <td>{row._row}</td><td><strong>{row.name || '—'}</strong></td><td>{row.jiraIdentifier || '—'}</td><td>{row.serialNumber || '—'}</td><td>{row.type || '—'}</td><td>{row.crewCode || '—'}</td><td>{row.assigneeName || '—'}</td>
-              <td>{row._error ? <span style={{ fontWeight: 600 }}>{row._error}</span> : <span>{row._reconcile?.action==='merge-serial'?'Merge by serial':row._reconcile?.action==='update-device-id'?'Update existing':row._reconcile?.action==='update-name'?'Update by name':row._reconcile?.action==='deferred'?'Reconcile during import':'Create new'}{row._reconcile?.message?<small style={{display:'block'}}>{row._reconcile.message}</small>:null}</span>}</td>
+              <td>{row._error ? <span style={{ fontWeight: 600 }}>{row._error}</span> : <span>{row._reconcile?.action==='merge-serial'?'Merge by serial':row._reconcile?.action==='update-device-id'?'Update existing':row._reconcile?.action==='update-name'?'Update by name':row._reconcile?.action==='deferred'?'Reconcile during import':row._reconcile?.action==='checking'?'Checking…':'Create new'}{row._reconcile?.message?<small style={{display:'block'}}>{row._reconcile.message}</small>:null}</span>}</td>
             </tr>)}</tbody>
           </table>
           {rows.length > 200 && <p>Showing the first 200 of {rows.length} rows.</p>}
