@@ -32,3 +32,12 @@ export async function retryBusyRows(rows, failed, sendBatch, { delays = BUSY_RET
   }
   return { ...totals, failed: left };
 }
+
+// Pause before the next batch of the main import pass: doubles (from 2s, up to 20s) while Forge is
+// turning rows away, and halves again once a batch goes through cleanly. Fewer rows then need the
+// retry rounds at the end.
+export function nextImportPause(previous, busyRows) {
+  if (busyRows > 0) return Math.min(Math.max(previous * 2, 2000), 20000);
+  const half = Math.floor(previous / 2);
+  return half < 500 ? 0 : half;
+}

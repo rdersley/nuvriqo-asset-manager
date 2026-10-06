@@ -609,9 +609,14 @@ function suggestDevice(value,lookup){
 }
 resolver.define('getDeviceIdReview',async()=>{
   const records=await queryAllByPrefix(DEVICE_ID_REVIEW_PREFIX,1000);
-  const open=records.filter(r=>r.status==='open');const lookup=await deviceLookup();
+  // Checked again against the format as saved now: a value the format has since been widened to
+  // accept (e.g. a new "EXS_@#####" line) leaves the list.
+  const settings=await getSettingsValue();const compiled=compileDeviceIdPatterns(settings.deviceIdPatterns,settings.assetTypes);
+  const nowValid=records.filter(r=>r.status==='open'&&checkDeviceId(r.value,compiled)?.ok);
+  await Promise.all(nowValid.map(r=>kvs.delete(deviceIdReviewKey(r.value))));
+  const open=records.filter(r=>r.status==='open'&&!nowValid.includes(r));const lookup=await deviceLookup();
   const values=open.map(r=>({...r,suggestion:suggestDevice(r.value,lookup)})).sort((a,b)=>Number(b.ticketCount||0)-Number(a.ticketCount||0)||String(a.value).localeCompare(String(b.value)));
-  return{values,ignored:records.filter(r=>r.status==='ignored').length,fixed:records.filter(r=>r.status==='fixed'||r.status==='cleared').length,suggestionsPartial:lookup.partial,truncated:records.length>=1000};
+  return{values,nowValid:nowValid.length,ignored:records.filter(r=>r.status==='ignored').length,fixed:records.filter(r=>r.status==='fixed'||r.status==='cleared').length,suggestionsPartial:lookup.partial,truncated:records.length>=1000};
 });
 // JQL finding tickets whose Device ID field holds this exact value (filtered exactly afterwards).
 function exactValueClause(field,value){
