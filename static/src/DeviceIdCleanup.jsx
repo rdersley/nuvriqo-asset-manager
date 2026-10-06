@@ -94,21 +94,25 @@ export default function DeviceIdCleanup() {
       {notes.partial && <div className="card report-warning">Suggestions only checked the first 10,000 devices.</div>}
       {notes.truncated && <div className="card report-warning">Showing the first 1,000 values. Fix or ignore some and refresh to see the rest.</div>}
       <div className="table-wrap">
-        <table aria-label="Device ID clean-up">
-          <thead><tr><th>Value in the Device ID field</th><th>Tickets</th><th>Why</th><th>Correct Device ID</th><th>Action</th></tr></thead>
+        {/* Fixed layout and wrapping text so the action buttons always fit on screen. */}
+        <table aria-label="Device ID clean-up" style={{ tableLayout: 'fixed' }}>
+          <colgroup><col style={{ width: '44%' }} /><col style={{ width: '24%' }} /><col style={{ width: '32%' }} /></colgroup>
+          <thead><tr><th>Value in the Device ID field</th><th>Correct Device ID</th><th>Action</th></tr></thead>
           <tbody>
-            {!loading && !values.length && <tr><td colSpan="5">Nothing to clean up. Run <strong>Preview Jira scan</strong> in Configuration to check the Device ID field.</td></tr>}
+            {!loading && !values.length && <tr><td colSpan="3" style={{ whiteSpace: 'normal' }}>Nothing to clean up. Run <strong>Preview Jira scan</strong> in Configuration to check the Device ID field.</td></tr>}
             {values.map((v) => (
               <tr key={v.value} style={{ cursor: 'default' }}>
-                <td><strong>{v.value}</strong></td>
-                <td>{v.ticketCount}<small style={{ display: 'block' }}>{(v.issueKeys || []).slice(0, 5).map((k, i) => <React.Fragment key={k}>{i ? ', ' : ''}<button className="issue-link" onClick={() => router.open(`/browse/${k}`)}>{k}</button></React.Fragment>)}{v.ticketCount > 5 ? ', …' : ''}</small></td>
-                <td>{v.reason}</td>
-                <td>
-                  <input aria-label={`Correct Device ID for ${v.value}`} value={chosen[v.value] || ''} placeholder="Device ID" disabled={busy} onChange={(e) => setChosen({ ...chosen, [v.value]: e.target.value })} style={{ width: 130 }} />
-                  {v.suggestion && <small style={{ display: 'block' }}>Suggested: {v.suggestion.deviceId} ({v.suggestion.matchedBy})</small>}
+                <td style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', verticalAlign: 'top' }}>
+                  <strong>{v.value}</strong>
+                  <small>{v.reason}</small>
+                  <small>{v.ticketCount} ticket{v.ticketCount === 1 ? '' : 's'}: {(v.issueKeys || []).slice(0, 5).map((k, i) => <React.Fragment key={k}>{i ? ', ' : ''}<button className="issue-link" onClick={() => router.open(`/browse/${k}`)}>{k}</button></React.Fragment>)}{v.ticketCount > 5 ? ', …' : ''}</small>
                 </td>
-                <td>
-                  <div className="actions" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
+                <td style={{ whiteSpace: 'normal', verticalAlign: 'top' }}>
+                  <input aria-label={`Correct Device ID for ${v.value}`} value={chosen[v.value] || ''} placeholder="Device ID" disabled={busy} onChange={(e) => setChosen({ ...chosen, [v.value]: e.target.value })} style={{ width: '100%', maxWidth: 200 }} />
+                  {v.suggestion && <small>Suggested: {v.suggestion.deviceId} ({v.suggestion.matchedBy})</small>}
+                </td>
+                <td style={{ whiteSpace: 'normal', verticalAlign: 'top' }}>
+                  <div className="actions" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 6, marginTop: 0 }}>
                     <button className="primary" disabled={busy || !(chosen[v.value] || '').trim()} onClick={() => act(v, 'fix')}>{working === v.value ? 'Working…' : 'Fix tickets'}</button>
                     <button className="secondary" disabled={busy} onClick={() => act(v, 'clear')}>Clear field</button>
                     <button className="secondary" disabled={busy} onClick={() => act(v, 'ignore')}>Ignore</button>
