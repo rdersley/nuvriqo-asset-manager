@@ -9,7 +9,7 @@ mock.module('@forge/bridge', { namedExports: { invoke: async (name, payload) => 
   calls.push({ name, payload });
   if (name === 'getReportPage') {
     const start = payload.cursor ? Number(payload.cursor) : 0;
-    const items = Array.from({ length: Math.min(2000, assetCount - start) }, (_, i) => ({ id: `A${start + i}`, name: `D${start + i}`, faultSummary: (start + i) % 2 ? null : { total: 3, open: 1, resolved: 2, lastFault: '2026-09-01', latestFaultKey: 'SD-1', latestFault: 'Faulty Battery' } }));
+    const items = Array.from({ length: Math.min(2000, assetCount - start) }, (_, i) => ({ id: `A${start + i}`, name: `D${start + i}`, faultSummary: (start + i) % 2 ? null : { total: 3, open: 1, resolved: 2, lastFault: '2026-09-01', latestFaultKey: 'SD-1', latestFault: 'Faulty Battery', repeats: [] } }));
     const next = start + 2000 < assetCount ? String(start + 2000) : null;
     return { items, nextCursor: next };
   }
@@ -20,7 +20,7 @@ mock.module('@forge/bridge', { namedExports: { invoke: async (name, payload) => 
   }
   throw new Error(`unexpected ${name}`);
 } } });
-const { loadFullReport, loadReportRows } = await import('./reportData.js');
+const { loadFullReport, loadReportRows, repeatFaultRows } = await import('./reportData.js');
 
 beforeEach(() => { calls.length = 0; failReportBatch = null; truncateBatch = null; });
 
@@ -43,4 +43,14 @@ test('fault column rows are fetched only for the assets in view', async () => {
   assert.equal(rows.length, 150);
   assert.equal(partial, false);
   assert.equal(calls.filter((c) => c.name === 'listAssetsPage').length, 0);
+});
+
+test('repeat fault rows list each device and fault seen at least the minimum times, most first', () => {
+  const assets = [
+    { id: 'A', name: 'RYRS1', faultSummary: { repeats: [{ fault: 'Faulty Battery', count: 2, open: 0, first: '2026-01-01', last: '2026-05-01', keys: ['SD-2', 'SD-1'] }] } },
+    { id: 'B', name: 'RYRS2', faultSummary: { repeats: [{ fault: 'Screen cracked', count: 4, open: 1, first: '2026-02-01', last: '2026-09-01', keys: ['SD-9'] }] } },
+    { id: 'C', name: 'RYRS3', faultSummary: null }
+  ];
+  assert.deepEqual(repeatFaultRows(assets).map((r) => [r.name, r.fault, r.count]), [['RYRS2', 'Screen cracked', 4], ['RYRS1', 'Faulty Battery', 2]]);
+  assert.deepEqual(repeatFaultRows(assets, 3).map((r) => r.name), ['RYRS2']);
 });

@@ -175,3 +175,11 @@ test('the Jira scan saves each device\'s fault figures for Reports', async () =>
   const f = asset('A1').faultSummary;
   assert.deepEqual([f.total, f.open, f.involved, f.latestFaultKey, f.latestFault], [1, 1, 2, 'OPS-9', 'Screen cracked']);
 });
+
+test('the same fault on several tickets is saved as a repeat, ignoring case and spacing', async () => {
+  store.set('settings:asset-manager', { ...store.get('settings:asset-manager'), jiraFaultField: { id: 'customfield_300', name: 'Fault' } });
+  const faulty = (key, created, fault, open) => ({ ...ticket(key, 'DEV100', 'ANNA1', created), fields: { ...ticket(key, 'DEV100', 'ANNA1', created).fields, customfield_300: fault, ...(open ? { status: { name: 'Open', statusCategory: { key: 'new' } } } : { resolutiondate: created }) } });
+  issues = [faulty('OPS-9', '2026-10-03T00:00:00Z', 'Faulty Battery', true), faulty('OPS-7', '2026-08-01T00:00:00Z', 'faulty  battery'), faulty('OPS-5', '2026-03-01T00:00:00Z', 'Faulty Battery'), faulty('OPS-4', '2026-02-01T00:00:00Z', 'Screen cracked')];
+  await scan();
+  assert.deepEqual(asset('A1').faultSummary.repeats, [{ fault: 'Faulty Battery', count: 3, open: 1, first: '2026-03-01T00:00:00Z', last: '2026-10-03T00:00:00Z', keys: ['OPS-9', 'OPS-7', 'OPS-5'] }]);
+});

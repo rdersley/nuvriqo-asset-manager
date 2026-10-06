@@ -80,10 +80,13 @@ function faultHistoryKey(assetId,ticket){const label=clean(ticket?.fault||'');if
 function faultSummaryFrom(tickets){
   const byKey=new Map();for(const t of safeArray(tickets)){if(!t?.key)continue;const current=byKey.get(t.key);if(!current||t.relation==='primary')byKey.set(t.key,t);}
   const all=[...byKey.values()].sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
-  const primary=all.filter(t=>t.relation==='primary');const faults=primary.filter(t=>clean(t.fault||''));const open=faults.filter(t=>!t.resolved&&t.statusCategory!=='done').length;const latest=faults[0]||null;
-  return{total:faults.length,open,resolved:faults.length-open,related:all.filter(t=>t.relation==='related').length,involved:all.length,lastFault:latest?.created||'',latestFaultKey:latest?.key||'',latestFault:latest?clean(latest.fault):'',updatedAt:now()};
+  const primary=all.filter(t=>t.relation==='primary');const faults=primary.filter(t=>clean(t.fault||''));const isOpen=(t)=>!t.resolved&&t.statusCategory!=='done';const open=faults.filter(isOpen).length;const latest=faults[0]||null;
+  // The same fault (ignoring case and spacing) on two or more tickets: for the Repeat faults report.
+  const groups=new Map();for(const t of faults){const k=normaliseName(t.fault);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(t);}
+  const repeats=[...groups.values()].filter(g=>g.length>1).map(g=>({fault:clean(g[0].fault),count:g.length,open:g.filter(isOpen).length,first:g.at(-1).created||'',last:g[0].created||'',keys:g.slice(0,5).map(t=>t.key)})).sort((a,b)=>b.count-a.count||String(b.last).localeCompare(String(a.last)));
+  return{total:faults.length,open,resolved:faults.length-open,related:all.filter(t=>t.relation==='related').length,involved:all.length,lastFault:latest?.created||'',latestFaultKey:latest?.key||'',latestFault:latest?clean(latest.fault):'',repeats,updatedAt:now()};
 }
-const sameFaultSummary=(a,b)=>Boolean(a&&b)&&['total','open','resolved','related','involved','lastFault','latestFaultKey','latestFault'].every(k=>(a[k]??'')===(b[k]??''));
+const sameFaultSummary=(a,b)=>Boolean(a&&b)&&['total','open','resolved','related','involved','lastFault','latestFaultKey','latestFault'].every(k=>(a[k]??'')===(b[k]??''))&&JSON.stringify(a.repeats)===JSON.stringify(b.repeats);
 async function storeFaultSummary(asset,tickets){if(!asset?.id)return;const summary=faultSummaryFrom(tickets);if(sameFaultSummary(asset.faultSummary,summary))return;const current=await kvs.get(`${ASSET_PREFIX}${asset.id}`);if(current)await kvs.set(`${ASSET_PREFIX}${asset.id}`,{...current,faultSummary:summary});}
 // Adds the faults of these tickets that the ledger doesn't have yet; entries already there are
 // left as first recorded.
