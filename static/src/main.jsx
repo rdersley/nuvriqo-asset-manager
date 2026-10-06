@@ -4,6 +4,7 @@ import { router, view } from '@forge/bridge';
 import { invoke } from './invoke.js';
 import ImportDialog from './ImportDialog';
 import { retryBusyRows, nextImportPause, isBusyFailure } from './importRetry.js';
+import { parseCustomFields } from './customFields.js';
 import ReportsWorkspace from './ReportsWorkspace';
 import DataConflicts from './DataConflicts';
 import DeviceTimeline from './DeviceTimeline';
@@ -61,7 +62,7 @@ function Settings({ initial, onSave, onScan, onClose }) {
     statuses:statusesText.split('\n').map(x=>x.trim()).filter(Boolean),
     locations:locationsText.split('\n').map(x=>x.trim()).filter(Boolean),
     crewMappings:crewMappingsText.split('\n').map((line)=>{const[crewCode,accountId='',displayName='']=line.split('|').map(x=>x.trim());return{crewCode,accountId,displayName};}).filter(m=>m.crewCode&&(m.displayName||m.accountId)),
-    customFields:customFieldsText.split('\n').map((line)=>{const[key,label,type='text']=line.split('|').map(x=>x.trim());return{key,label,type};}).filter(f=>f.key&&f.label)
+    customFields:parseCustomFields(customFieldsText)
   });
   async function handleSave(){setSaving(true);setSaveError('');setSaveStage('Saving configuration…');try{await onSave(compileSettings(),setSaveStage);}catch(e){setSaveError(e.message||'Could not save configuration.');}finally{setSaving(false);}}
   // Saves the configuration (so the preview uses this Device ID format), then previews the scan.
@@ -108,7 +109,7 @@ function Settings({ initial, onSave, onScan, onClose }) {
       </div>
     </div>
     <label className="wide">Assignment reference → holder mappings<textarea rows="5" placeholder={'EMP123 | | Jane Smith\nEXT999 | 712020:abcd... | John Smith'} value={crewMappingsText} onChange={(e)=>setCrewMappingsText(e.target.value)} /><small>One mapping per line: Assignment reference | optional Jira account ID | display name. A Jira account is not required. If a reference has no mapping, Asset Manager still records the reference as the holder.</small></label>
-    <label>Asset types<textarea rows="8" value={assetTypesText} onChange={(e)=>setAssetTypesText(e.target.value)} /><TidyTypesButton/></label><label>Statuses<textarea rows="8" value={statusesText} onChange={(e)=>setStatusesText(e.target.value)} /></label><label>Locations<textarea rows="8" value={locationsText} onChange={(e)=>setLocationsText(e.target.value)} /></label><label>Custom fields<textarea rows="8" placeholder="assetOwner | Asset owner | text" value={customFieldsText} onChange={(e)=>setCustomFieldsText(e.target.value)} /></label>
+    <label>Asset types<textarea rows="8" value={assetTypesText} onChange={(e)=>setAssetTypesText(e.target.value)} /><TidyTypesButton/></label><label>Statuses<textarea rows="8" value={statusesText} onChange={(e)=>setStatusesText(e.target.value)} /></label><label>Locations<textarea rows="8" value={locationsText} onChange={(e)=>setLocationsText(e.target.value)} /></label><label>Custom fields<textarea rows="8" placeholder={"Asset owner\nIMEI\nHandover date | date"} value={customFieldsText} onChange={(e)=>setCustomFieldsText(e.target.value)} /><small>One field per line: just the name (<code>Asset owner</code>), or name and type (<code>Handover date | date</code>). Each field appears on the device form and page, and as a column you can import into. Save configuration to keep them.</small></label>
     {fieldError && <span className="report-warning wide">{fieldError}</span>}{saveStage&&<span className="wide">{saveStage}</span>}{saveError&&<span className="report-warning wide">{saveError}</span>}
   </div><div className="actions"><button className="secondary" onClick={onClose} disabled={saving}>Cancel</button><button className="secondary" onClick={handlePreview} disabled={saving||!settings.jiraAssetField?.id||!settings.jiraProjectKey}>Preview Jira scan</button><button className="secondary" onClick={handleScan} disabled={saving||!settings.jiraAssetField?.id||!settings.jiraProjectKey}>{saving?'Working…':'Scan & import Device IDs now'}</button><button className="primary" onClick={handleSave} disabled={saving}>{saving?'Saving…':'Save configuration'}</button></div><ScanPreviewSummary summary={scanPreview} onClose={()=>setScanPreview(null)}/></div>;
 }
