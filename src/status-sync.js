@@ -7,8 +7,10 @@ import {
 } from './status-automation.js';
 import { checkDeviceId, compileDeviceIdPatterns } from './device-id-rule.js';
 import { recordTicketRejection } from './device-id-review.js';
+import { fillOnCreate } from './reporter-fill.js';
 
 // Trigger on avi:jira:created:issue and avi:jira:updated:issue (internal edition).
+// A new ticket gets its reporter's crew code and base when that is switched on in Crew Tracking.
 // When a ticket is created or its Device ID changes, a value that isn't a Device ID goes onto the
 // Device ID clean-up list straight away, and a Device ID that is in the register fills an empty
 // Device type field from the register. When a ticket's status changes:
@@ -191,9 +193,12 @@ async function fillTypeFromRegister(settings, fields, issueKey, fieldId, typeFie
 export async function handler(event) {
   const issueKey = clean(event?.issue?.key);
   const deviceIdCheck = await checkDeviceIdOnSave(event, issueKey).catch(() => ({ deviceId: 'check-failed' }));
+  // New tickets get the reporter's crew code and base (src/reporter-fill.js).
+  const crewFill = await fillOnCreate(event, issueKey).catch(() => 'fill-failed');
+  const onSave = { ...(deviceIdCheck || {}), ...(crewFill ? { crewFill } : {}) };
   // Most issue updates are not status changes; leave before any further storage or Jira call.
   const change = statusChangeFromEvent(event);
-  if (!change || !issueKey) return { skipped: 'not-a-status-change', ...(deviceIdCheck || {}) };
+  if (!change || !issueKey) return { skipped: 'not-a-status-change', ...onSave };
 
   const stored = (await kvs.get(SETTINGS_KEY)) || {};
   const rules = stored.statusAutomationEnabled ? normaliseStatusRules(stored.statusRules, stored.statuses || []) : [];

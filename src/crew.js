@@ -4,6 +4,7 @@ import { kvs, WhereConditions } from '@forge/kvs';
 import { guardResolver } from './auth.js';
 import { trackActor, actorFields } from './actor.js';
 import { registerSotiResolvers } from './soti.js';
+import { addLookup, removeLookup, crewEmailKey, crewAccountKey, FILL_SETTINGS_KEY, FILL_LOG_KEY } from './reporter-fill.js';
 
 // Internal Asset Operations handles crew personal data (emails, usernames,
 // contract dates) and rewrites asset holders, so every action is admin-only.
@@ -100,6 +101,16 @@ async function resolveCrew(login) {
   const alias = await kvs.get(crewAliasKey(login)); return alias?.crewCode ? (await kvs.get(crewKey(alias.crewCode))) || null : null;
 }
 
+// Email and Jira-account lookups used to fill a ticket's crew code and base from its reporter
+// (src/reporter-fill.js). Moves the crew code off the old email/account when they change.
+async function saveReporterLookups(record, previous=null) {
+  const code = record.crewCode;
+  if (previous?.email && normalise(previous.email) !== normalise(record.email)) await removeLookup(crewEmailKey(previous.email), code);
+  if (previous?.jsmCustomerAccountId && previous.jsmCustomerAccountId !== record.jsmCustomerAccountId) await removeLookup(crewAccountKey(previous.jsmCustomerAccountId), code);
+  if (clean(record.email)) await addLookup(crewEmailKey(record.email), code);
+  if (record.jsmCustomerLinkStatus === 'linked' && clean(record.jsmCustomerAccountId)) await addLookup(crewAccountKey(record.jsmCustomerAccountId), code);
+}
+
 async function lookupJsmCustomerByEmail(email) {
   email=clean(email||'');
   if(!email||!email.includes('@'))return{status:'no-email'};
@@ -120,7 +131,7 @@ resolver.define('importCrew', async ({payload}) => {
     if(!crewCode){failed.push({row:i+2,message:'Crew code is required.'});continue;}
     const existing=await kvs.get(crewKey(crewCode));
     const record={...(existing||{}),crewCode,name:clean(row.name||[clean(row.firstName||''),clean(row.lastName||'')].filter(Boolean).join(' ')||existing?.name||''),firstName:clean(row.firstName||existing?.firstName||''),lastName:clean(row.lastName||existing?.lastName||''),location:clean(row.location||row.base||existing?.location||''),email:clean(row.email||existing?.email||''),easysimUsername:clean(row.easysimUsername||existing?.easysimUsername||''),ryrWinUsername:clean(row.ryrWinUsername||existing?.ryrWinUsername||''),role:clean(row.role||existing?.role||''),contractEndDate:clean(row.contractEndDate||existing?.contractEndDate||''),trainingEndDate:clean(row.trainingEndDate||existing?.trainingEndDate||''),status:clean(row.status||existing?.status||'Active'),notes:clean(row.notes||existing?.notes||''),importedAt:now()};
-    record.identityAliases=await saveCrewAliases(record,existing); await kvs.set(crewKey(crewCode),record); imported++;
+    record.identityAliases=await saveCrewAliases(record,existing); await kvs.set(crewKey(crewCode),record); await saveReporterLookups(record,existing); imported++;
   }
   return {imported,failed};
 });
@@ -136,7 +147,7 @@ resolver.define('linkCrewCustomers',async({payload})=>{
   for(const crew of candidates){
     const result=await lookupJsmCustomerByEmail(crew.email);
     const updated={...crew,jsmCustomerLinkStatus:result.status,jsmCustomerAccountId:result.accountId||'',jsmCustomerDisplayName:result.displayName||'',jsmCustomerAccountType:result.accountType||'',jsmCustomerLinkedAt:result.status==='linked'?now():(crew.jsmCustomerLinkedAt||'')};
-    await kvs.set(crewKey(crew.crewCode),updated);
+    await kvs.set(crewKey(crew.crewCode),updated); await saveReporterLookups(updated,crew);
     if(result.status==='linked')linked+=1;else if(result.status==='not-found')notFound+=1;else if(result.status==='multiple')multiple+=1;else errors+=1;
   }
   return{processed:candidates.length,linked,notFound,multiple,errors,remaining:Math.max(0,eligible.length-candidates.length)};
@@ -166,7 +177,30 @@ resolver.define('getCrewReportConfig', async () => {
 resolver.define('getCrewPage', async ({payload}) => pageOf(CREW_PREFIX, payload?.cursor, 10));
 resolver.define('getCrewAssetPage', async ({payload}) => pageOf(ASSET_PREFIX, payload?.cursor, 10, (a)=>clean(a?.crewCode), (a)=>({id:a.id,name:a.name,jiraIdentifier:a.jiraIdentifier,crewCode:a.crewCode,type:a.type,status:a.status,location:a.location})));
 resolver.define('getCrewTicketPage', async ({payload}) => searchCrewTicketPage(await getSettings(), payload?.nextPageToken || null));
-resolver.define('deleteCrew',async({payload})=>{const code=clean(payload?.crewCode||'');if(!code)throw new Error('Crew code is required.');const old=await kvs.get(crewKey(code));for(const a of safeArray(old?.identityAliases)){const x=await kvs.get(crewAliasKey(a));if(x?.crewCode&&normalise(x.crewCode)===normalise(code))await kvs.delete(crewAliasKey(a));}await kvs.delete(crewKey(code));return{deleted:true};});
+resolver.define('deleteCrew',async({payload})=>{const code=clean(payload?.crewCode||'');if(!code)throw new Error('Crew code is required.');const old=await kvs.get(crewKey(code));for(const a of safeArray(old?.identityAliases)){const x=await kvs.get(crewAliasKey(a));if(x?.crewCode&&normalise(x.crewCode)===normalise(code))await kvs.delete(crewAliasKey(a));}if(old)await saveReporterLookups({crewCode:old.crewCode},old);await kvs.delete(crewKey(code));return{deleted:true};});
+
+// Filling a ticket's crew code and base from its reporter. The crew code field is the Jira
+// assignment reference field from Asset Manager configuration; the base field is chosen here.
+const fieldRef=(f)=>f?.id?{id:clean(f.id),name:clean(f.name||f.id)}:null;
+resolver.define('getTicketFillSettings',async()=>{
+  const stored=(await kvs.get(FILL_SETTINGS_KEY))||{},settings=await getSettings();
+  const r=await api.asUser().requestJira(route`/rest/api/3/field`,{headers:{Accept:'application/json'}});
+  const fields=r.ok?safeArray(await r.json()).filter(f=>String(f.id||'').startsWith('customfield_')).map(f=>({id:f.id,name:f.name||f.id})).sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})):[];
+  return{baseField:fieldRef(stored.baseField),fillOnCreate:stored.fillOnCreate===true,projects:safeArray(stored.projects),crewCodeField:fieldRef(settings.jiraCrewCodeField),lookupsBuiltAt:stored.lookupsBuiltAt||'',fields,log:(await kvs.get(FILL_LOG_KEY))||[]};
+});
+resolver.define('saveTicketFillSettings',async({payload})=>{
+  const stored=(await kvs.get(FILL_SETTINGS_KEY))||{};
+  const projects=[...new Set(String(Array.isArray(payload?.projects)?payload.projects.join(','):payload?.projects||'').split(/[\s,]+/).map(p=>p.trim().toUpperCase()).filter(p=>/^[A-Z][A-Z0-9_]*$/.test(p)))];
+  const next={...stored,baseField:fieldRef(payload?.baseField),fillOnCreate:payload?.fillOnCreate===true,projects};
+  await kvs.set(FILL_SETTINGS_KEY,next);return next;
+});
+// Crew imported before the email/account lookups existed: 1,000 crew per call from the cursor.
+resolver.define('rebuildCrewLookups',async({payload})=>{
+  const{items,nextCursor}=await pageOf(CREW_PREFIX,payload?.cursor,10);
+  for(const crew of items)await saveReporterLookups(crew);
+  if(!nextCursor)await kvs.set(FILL_SETTINGS_KEY,{...((await kvs.get(FILL_SETTINGS_KEY))||{}),lookupsBuiltAt:now()});
+  return{processed:items.length,nextCursor};
+});
 
 async function findAsset(identifier,deviceCode='') {
   identifier=clean(identifier||'');

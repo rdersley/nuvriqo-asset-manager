@@ -36,6 +36,8 @@ The development/internal manifest (`manifest.yml`) also includes **Internal Asse
 
 These tools intentionally remain available on the internal development installation, but they are **not part of the public Marketplace edition**.
 
+**Crew code and base on tickets.** Crew Tracking can fill a ticket's crew code (the Jira assignment reference field) and base (a Base field chosen on the Crew Tracking page) from its reporter. The reporter is matched to the imported crew register by email, or by the JSM customer linked to the crew member when Jira hides the email; a sub-task uses its parent's reporter. Only empty fields are filled, and a missing or ambiguous match fills nothing and is logged on the Crew Tracking page. It runs when a ticket is created (if switched on, optionally limited to listed projects) and from Split Devices, which shows the match and can fill the parent before creating sub-tasks. Crew imported before this feature need **Prepare crew email lookups** run once. In the Marketplace edition no crew register exists, so Split Devices never shows it.
+
 ## Marketplace edition
 
 `manifest.marketplace.yml` is the customer-facing Marketplace manifest. It deliberately excludes Internal Asset Operations, crew-specific imports, vPOS-specific reconciliation and their resources/handlers. This keeps the public product generic and prevents internal operational terminology or workflows from appearing for Marketplace customers.

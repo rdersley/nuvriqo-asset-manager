@@ -4,6 +4,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 
 import { trackActor, actorFields } from './actor.js';
+import { applyFill, fillConfigured, fillFieldIds, findCrewForUser, getFillSettings, logFill, planFill } from './reporter-fill.js';
 const resolver = trackActor(licensedResolver(new Resolver()));
 const ASSET_PREFIX = 'asset:';
 const SETTINGS_KEY = 'settings:asset-manager';
@@ -231,6 +232,27 @@ async function splitState(parentKey, detected) {
   }));
 }
 
+// The reporter's crew code and base for this ticket, from the crew register. Null when the
+// register is not in use (always so in the Marketplace edition).
+async function reporterFillFor(issueKey) {
+  const settings = await getFillSettings();
+  if (!fillConfigured(settings)) return null;
+  const issue = await loadIssue(issueKey, ['reporter', ...fillFieldIds(settings)]);
+  const reporter = issue.fields?.reporter || null;
+  const match = await findCrewForUser(reporter);
+  return {
+    settings, issue, match,
+    view: {
+      reporter: reporter ? (reporter.displayName || reporter.emailAddress || '') : '',
+      reporterEmail: reporter?.emailAddress || '',
+      status: match.status,
+      matchedBy: match.matchedBy || '',
+      crew: match.crew || null,
+      rows: planFill(settings, issue.fields, match).map(({ jiraValue, ...row }) => row)
+    }
+  };
+}
+
 resolver.define('previewDeviceSplit', async ({ payload, context }) => {
   const issueKey = clean(payload?.issueKey || context?.extension?.issue?.key);
   if (!issueKey) throw new Error('Issue is required.');
@@ -244,6 +266,7 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
   );
   const items = await splitState(issueKey, detected);
   const type = issue.fields?.project?.id ? await subtaskIssueType(issue.fields.project.id) : null;
+  const reporterFill = await reporterFillFor(issueKey).catch(() => null);
 
   return {
     issueKey,
@@ -253,6 +276,7 @@ resolver.define('previewDeviceSplit', async ({ payload, context }) => {
     canCreateSubtasks: Boolean(type?.id),
     subtaskWarning: type?.id ? '' : 'No Jira sub-task issue type is currently available for this project. The devices can be reviewed, but Jira must have a sub-task issue type enabled before they can be created.',
     items,
+    reporterFill: reporterFill?.view || null,
     textFound: Boolean(summaryText || descriptionText),
     scannedSources: ['summary', 'description']
   };
@@ -337,6 +361,21 @@ resolver.define('createDeviceSubtasks', async ({ payload, context }) => {
   }
 
   return { created, skipped, total: created.length, issueKey };
+});
+
+// Writes the reporter's crew code and base into empty fields on this ticket. Split Devices calls
+// it before creating sub-tasks, so they copy the values from the parent.
+resolver.define('fillReporterFields', async ({ payload, context }) => {
+  const issueKey = clean(payload?.issueKey || context?.extension?.issue?.key);
+  if (!issueKey) throw new Error('Issue is required.');
+  const found = await reporterFillFor(issueKey);
+  if (!found) throw new Error('Filling from the crew register is not set up.');
+  if (found.match.status !== 'found') return { result: found.match.status, reporterFill: found.view };
+  const outcome = await applyFill(api.asUser, issueKey, found.settings, found.issue.fields, found.match);
+  await logFill({ issueKey, reporter: found.view.reporter, crewCode: found.match.crew.crewCode, result: outcome.result, source: 'split-devices', detail: outcome.rows.map((r) => `${r.label}: ${r.action}`).join(', ') });
+  if (outcome.result === 'jira-update-failed') throw new Error(`Jira did not accept the update to ${issueKey}. Check the fields are on the ticket's edit screen and you can edit it.`);
+  if (outcome.result === 'jira-read-failed') throw new Error(`Could not read the edit screen of ${issueKey}.`);
+  return { result: outcome.result, rows: outcome.rows.map(({ jiraValue, ...row }) => row), reporterFill: (await reporterFillFor(issueKey))?.view || null };
 });
 
 export const handler = resolver.getDefinitions();
