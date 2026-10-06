@@ -178,3 +178,16 @@ test('the asset list Fault column reads without writing fault history, and fetch
   assert.equal(result.rows.find((r) => r.assetId === 'L1').total, 1);
   assert.equal([...store.keys()].filter((k) => k.startsWith('fault-history:')).length, 0);
 });
+
+test('opening a device records its faults in the ledger, once', async () => {
+  store.set('settings:asset-manager', { ...SETTINGS, jiraFaultField: { id: 'customfield_200', name: 'Fault' } });
+  store.set('asset:G1', { id: 'G1', name: 'Tablet G', jiraIdentifier: 'RYR_G' });
+  searchHandler = () => ({ issues: [{ ...issue('SD-9', 'RYR_G'), fields: { ...issue('SD-9', 'RYR_G').fields, customfield_200: 'Faulty Battery' } }] });
+  await call(main, 'getAssetTickets', { assetId: 'G1' });
+  const history = await call(main, 'getFaultHistory', { assetId: 'G1' });
+  assert.deepEqual(history.map((h) => [h.issueKey, h.fault]), [['SD-9', 'Faulty Battery']]);
+  const [key] = [...store.keys()].filter((k) => k.startsWith('fault-history:G1:'));
+  store.set(key, { ...store.get(key), firstSeen: '2026-01-01T00:00:00.000Z' });
+  await call(main, 'getAssetTickets', { assetId: 'G1' });
+  assert.equal(store.get(key).firstSeen, '2026-01-01T00:00:00.000Z', 'not rewritten');
+});
