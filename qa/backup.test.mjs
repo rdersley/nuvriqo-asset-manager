@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 // In-memory stand-in for Forge KVS: ordered keys, cursor paging, TTL metadata and batchSet.
 const store = new Map();
+const secrets = new Map();
 const batchCalls = [];
 mock.module('@forge/kvs', {
   namedExports: {
@@ -23,6 +24,8 @@ mock.module('@forge/kvs', {
         };
         return builder;
       },
+      async getSecret(key) { return secrets.get(key); },
+      async setSecret(key, value) { secrets.set(key, value); },
       async batchSet(items) {
         batchCalls.push(items.length);
         const failedKeys = [];
@@ -98,4 +101,22 @@ test('defineBackupResolvers registers the two resolvers', async () => {
   assert.deepEqual(Object.keys(defs).sort(), ['exportBackupPage', 'importBackupBatch']);
   assert.deepEqual(await defs.importBackupBatch({ payload: { items: [{ key: 'x', value: 1 }] } }), { restored: 1, skipped: 0, failed: [] });
   assert.deepEqual((await defs.exportBackupPage({ payload: {} })).items, [{ key: 'x', value: 1 }]);
+});
+
+test('apps can back up chosen secret records and restore only those as secrets', async () => {
+  store.clear(); secrets.clear();
+  store.set('contacts:index', { value: ['c1', 'c2'] });
+  secrets.set('contact:c1', { name: 'Ann', mobile: '+353800000001' });
+  secrets.set('contact:c2', { name: 'Bob', mobile: '+353800000002' });
+  secrets.set('provider:api-key', 'never exported');
+  const secretKeys = async () => store.get('contacts:index').value.map((id) => `contact:${id}`);
+  const page = await exportBackupPage(null, { secretKeys });
+  assert.deepEqual(page.items.filter((i) => i.secret).map((i) => i.key), ['contact:c1', 'contact:c2']);
+  assert.equal(page.items.some((i) => i.key === 'provider:api-key'), false);
+  secrets.clear();
+  const result = await importBackupBatch([...page.items, { key: 'provider:api-key', value: 'injected', secret: true }], { allowSecretKey: (key) => key.startsWith('contact:') });
+  assert.deepEqual([result.restored, result.skipped, result.failed], [3, 1, []]);
+  assert.equal(secrets.get('contact:c2').mobile, '+353800000002');
+  assert.equal(secrets.has('provider:api-key'), false);
+  assert.equal(store.has('contact:c1'), false, 'secret records are not written as plain records');
 });
