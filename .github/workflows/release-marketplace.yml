@@ -25,6 +25,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          check-latest: true
       - name: Install backend dependencies
         run: npm install --ignore-scripts
       - name: Install public UI dependencies
